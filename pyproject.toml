@@ -1,0 +1,41 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "polish"
+version = "0.1.0"
+description = "Autonomous night-shift refactoring agent"
+readme = "README.md"
+requires-python = ">=3.11"
+license = { text = "MIT" }
+authors = [{ name = "Yash Chanchani" }]
+dependencies = [
+    # gitignore matching, wildmatch-compatible with git's own semantics
+    "pathspec>=1.0",
+]
+
+[project.scripts]
+polish = "polish.cli:run"
+
+[dependency-groups]
+dev = ["pytest>=8", "ruff>=0.6"]
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/polish"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "--strict-markers"
+
+[tool.ruff]
+src = ["src", "tests"]
+target-version = "py311"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B", "SIM"]
+
+[tool.ruff.lint.isort]
+# `corpus_support` is a test-suite module reached via pytest's rootdir, not an
+# installed package, so ruff needs telling that it is ours.
+known-first-party = ["polish", "corpus_support"]
