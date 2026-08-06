@@ -1,0 +1,30 @@
+{
+ "name": "slugify-js",
+ "source": "https://github.com/sindresorhus/slugify",
+ "commit": "7c318bd1aa4b4affab29761f15a9604323fe2a3b",
+ "captured": "2026-08-06",
+ "note": "A real repository with no Python in it at all. Polish must decline rather than return an empty set.",
+ "label_rule": {
+  "reason": "There is no Python here, so there is no first-party Python source. The set is empty by definition.",
+  "first_party": "every .py/.pyi file, minus not_first_party",
+  "not_first_party": []
+ },
+ "expect_error": true,
+ "first_party": [],
+ "files": {
+  ".editorconfig": "",
+  ".gitattributes": "",
+  ".github/security.md": "",
+  ".github/workflows/main.yml": "",
+  ".gitignore": "node_modules\nyarn.lock\n",
+  ".npmrc": "",
+  "index.d.ts": "",
+  "index.js": "",
+  "license": "",
+  "overridable-replacements.js": "",
+  "package.json": "",
+  "readme.md": "",
+  "test.js": "",
+  ".git/info/exclude": "# git ls-files --others --exclude-from=.git/info/exclude\n# Lines that start with '#' are comments.\n# For a project mostly in C, the following would be a good set of\n# exclude patterns (uncomment them if you want to use them):\n# *.[oa]\n# *~\n"
+ }
+}
