@@ -79,7 +79,7 @@ snapshot  .polish/snapshots/raw/2026-08-07 (6 files)
 mirrored  2 uncommitted files
 sandbox   .polish/runs/2026-08-07 (removed)
 branch    polish/2026-08-07
-scope     full sweep: 5 first-party files in scope
+scope     full sweep: 6 first-party files in scope
 why       first run: no record of a previous run at .polish/last-run.json, so there is nothing to be incremental against
 tier      1 (characterization)
 reason    a test suite ran, and first-party modules import cleanly

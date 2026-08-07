@@ -8,19 +8,24 @@ worth having are ones where the non-determinism is real and the runs really
 happen. A stubbed runner replaying recorded outcomes would pass identically
 whether the harness ran the suite three times or zero.
 
-The non-determinism is therefore built rather than simulated, one repository per
+The non-determinism is therefore built rather than simulated, one function per
 source issue #13 names: **time**, **randomness**, **network** and **iteration
-order**. Two of the four are naturally reliable; the other two are made reliable
-without being made fake — the flaky *test* counts its own runs on disk so that
-"non-identical across N runs" is a fact rather than a probability, and the
-iteration-order case varies dict insertion order rather than relying on
-`PYTHONHASHSEED` happening to shuffle a set differently three times running.
+order**. None of them is faked. The network case binds an ephemeral port rather
+than reaching a host, and the iteration-order case is a real hash-seed-ordered
+set — measured at twelve independent interpreters giving twelve distinct orders,
+which is what makes it safe to assert on. The one thing made deterministic is
+the flaky *test*, which counts its own runs on disk so that "non-identical across
+N runs" is a fact rather than a probability. A probabilistic assertion inside a
+determinism gate's own suite would be a poor joke.
 
-`FAST` shrinks N and R for the repositories where the count is not what is under
-test. `test_the_baseline_really_runs_three_times` deliberately does not use it.
+`FAST` shrinks N and R for the tests whose subject is not N and R.
+`test_the_baseline_really_runs_three_times_before_anything_else` deliberately
+does not use it.
 """
 
 from __future__ import annotations
+
+import ast
 
 import pytest
 
@@ -373,6 +378,42 @@ def test_the_surviving_oracles_are_the_only_files_left_on_disk(characterized):
     body = (found.workspace / "oracles" / "test_polish_sample_maths.py").read_text()
     assert "sample.drift" not in body
     assert body.count("def test_") == len(found.oracles)
+
+
+def test_the_harness_imports_nothing_from_polish(characterized):
+    """The harness runs where Polish is not installed, so it cannot need Polish.
+
+    Asserted against the copied file rather than against the sandbox, on
+    purpose. `conftest` puts the running interpreter's packages on the sandbox's
+    path so that the suite works offline, which incidentally makes `polish`
+    importable there — so an accidental `from polish import ...` would work in
+    the suite and fail on every real repository. Reading the file is the check
+    that does not depend on the environment being hostile enough.
+    """
+    _, found = characterized()
+    harness = (found.workspace / "_polish_harness.py").read_text()
+
+    imported = {
+        name.name.split(".")[0]
+        for node in ast.walk(ast.parse(harness))
+        if isinstance(node, ast.Import)
+        for name in node.names
+    } | {
+        (node.module or "").split(".")[0]
+        for node in ast.walk(ast.parse(harness))
+        if isinstance(node, ast.ImportFrom)
+    }
+
+    assert "polish" not in imported
+    assert imported <= {
+        "__future__",
+        "json",
+        "math",
+        "os",
+        "sys",
+        "threading",
+        "pytest",
+    }, imported
 
 
 def test_the_calls_the_recorder_refuses_are_never_recorded_at_all(characterized):

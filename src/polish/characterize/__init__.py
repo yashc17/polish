@@ -36,7 +36,7 @@ something about behaviour that Polish has not observed — a wrong pin produces 
 confident oracle for behaviour that never happens, which is strictly worse than
 no oracle because it looks like verification.
 
-**Known gap.** Only a repository promoted by gate 2 gets characterized. One
+**Known gap (#32).** Only a repository promoted by gate 2 gets characterized. One
 promoted solely by gate 4's opted-in entry point has an execution source Polish
 does not yet trace, so it comes back with no oracles and every symbol at Tier 0
 — safe, correct, and less useful than it should be.

@@ -121,4 +121,7 @@ suite re-runs. The cost is real and is documented where it is paid.
 - A repository promoted to Tier 1 solely by gate 4's opted-in entry point is not
   traced: the harness's execution source is the suite. It comes back with no
   oracles and every symbol at Tier 0 — correct, and less useful than it should
-  be. Tracked separately rather than papered over here.
+  be. Tracked in [#32](https://github.com/yashc17/polish/issues/32) rather than
+  papered over here. Note it needs a fourth task and not a sixth shape: the
+  program stays a constant, and the entry point's target travels in the harness
+  configuration like every other parameter.
