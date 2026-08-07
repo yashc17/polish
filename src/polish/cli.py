@@ -84,7 +84,10 @@ def build_parser() -> argparse.ArgumentParser:
             "to a dated raw snapshot, checks a dated branch out into its own "
             "worktree with its own virtualenv, probes whether the repository "
             "can be executed, does its work there, and leaves the working tree "
-            "byte-identical. The tier verdict and every command the probe ran "
+            "byte-identical. The first run sweeps the whole repository; every "
+            "run after it looks at the files that changed since the last one "
+            "plus their dependency closure, and says so. The tier verdict and "
+            "every command the probe ran "
             "are printed with the run. This release removes unused imports at "
             "Tier 0: every change is proven behaviour-preserving by "
             "AST-equivalence and a type check before it is committed, and one "
@@ -111,6 +114,14 @@ def build_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="leave the worktree and virtualenv in place for inspection",
     )
+    run_command.add_argument(
+        "--full",
+        action="store_true",
+        help=(
+            "sweep the whole repository instead of scoping to what changed "
+            "since the last run — how to ask for the first run's deep pass again"
+        ),
+    )
     return parser
 
 
@@ -121,7 +132,12 @@ def main(argv: Sequence[str] | None = None) -> int:
     if args.command == "observe":
         return _observe(args.action, args.path)
     if args.command == "run":
-        return _run(args.path, init_git=args.init_git, keep_sandbox=args.keep_sandbox)
+        return _run(
+            args.path,
+            init_git=args.init_git,
+            keep_sandbox=args.keep_sandbox,
+            full=args.full,
+        )
     raise AssertionError(f"unhandled command: {args.command}")  # pragma: no cover
 
 
@@ -165,9 +181,11 @@ def _observe(action: str, path: Path) -> int:
     return EXIT_OK
 
 
-def _run(path: Path, *, init_git: bool, keep_sandbox: bool) -> int:
+def _run(path: Path, *, init_git: bool, keep_sandbox: bool, full: bool) -> int:
     try:
-        record = envelope.run(path, init_git=init_git, keep_sandbox=keep_sandbox)
+        record = envelope.run(
+            path, init_git=init_git, keep_sandbox=keep_sandbox, full=full
+        )
     except (NotAPythonProject, envelope.EnvelopeError) as declined:
         print(f"polish: {declined}", file=sys.stderr)
         return EXIT_DECLINED
