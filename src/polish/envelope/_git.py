@@ -10,6 +10,7 @@ is why Polish refuses one rather than degrading; see
 from __future__ import annotations
 
 import subprocess
+from collections.abc import Sequence
 from pathlib import Path
 
 
@@ -49,6 +50,17 @@ def initialise(root: Path) -> None:
 def commit_all(root: Path, message: str) -> None:
     _run(root, "add", "-A")
     _run(root, "commit", "--quiet", "-m", message)
+
+
+def commit_paths(worktree: Path, paths: Sequence[str], message: str) -> None:
+    """Commit exactly these paths, and nothing that happens to be beside them.
+
+    One commit per change is the review surface (SPEC §3.9), so a commit that
+    swept up an unrelated file would not just be untidy — it would break the
+    promise that any single commit can be dropped on its own.
+    """
+    _run(worktree, "add", "--", *paths)
+    _run(worktree, "commit", "--quiet", "-m", message, "--", *paths)
 
 
 def branch_exists(root: Path, name: str) -> bool:

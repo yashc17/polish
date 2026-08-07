@@ -87,7 +87,23 @@ def test_run_reports_the_snapshot_sandbox_and_branch_it_produced(make_git_repo, 
     assert reported["snapshot"] == f".polish/snapshots/raw/{today} (1 file)"
     assert reported["sandbox"] == f".polish/runs/{today} (removed)"
     assert reported["branch"] == f"polish/{today}"
-    assert reported["changes"].startswith("0 ")
+    assert reported["changes"] == "0 committed, 0 dropped"
+
+
+def test_run_reports_each_change_it_committed(make_git_repo, capsys):
+    repo = make_git_repo(
+        {
+            "pyproject.toml": '[project]\nname = "demo"\n',
+            "demo.py": "import json\nimport os\n\nVALUE = os.sep\n",
+        }
+    )
+
+    code = main(["run", str(repo)])
+    captured = capsys.readouterr()
+
+    assert code == 0
+    assert "changes   1 committed, 0 dropped" in captured.out
+    assert "  + refactor(imports): drop 1 unused import from demo.py" in captured.out
 
 
 def test_run_exits_non_zero_with_an_actionable_message_outside_a_repository(

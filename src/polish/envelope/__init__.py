@@ -1,14 +1,16 @@
-"""The safety envelope — snapshot, sandbox, branch.
+"""The safety envelope — snapshot, sandbox, branch, and the payload inside it.
 
 `run()` is the whole interface. Everything behind it is private.
 
 The envelope is the product (SPEC §1.1): a change Polish cannot verify is a
 change Polish does not make, and the apparatus around the edit is what earns
-the right to be left unattended. This module is that apparatus with nothing
-inside it yet — it takes the snapshot, builds the sandbox, opens the branch,
-makes no edits, and leaves the working tree exactly as it found it. Two of the
-v1 acceptance criteria (§4.2, §4.9) are about the envelope rather than the
-refactoring, and both are provable here, before an edit engine exists.
+the right to be left unattended. It takes the snapshot, builds the sandbox,
+opens the branch, runs the refactor engine inside it, commits what was proven
+one change at a time, and leaves the working tree exactly as it found it. Four
+of the v1 acceptance criteria are settled here — §4.2 (the snapshot
+byte-matches), §4.4 (Tier 0 produces a provably behaviour-preserving diff),
+§4.7 (one reviewable commit per change) and §4.9 (the working tree is
+untouched).
 """
 
 from __future__ import annotations
@@ -19,6 +21,7 @@ from datetime import date
 from itertools import count
 from pathlib import Path
 
+from polish import tier0
 from polish.firstparty import FirstPartySet, scan
 
 from . import _git, _sandbox, _snapshot
@@ -56,9 +59,15 @@ class RunRecord:
     files: tuple[str, ...]
     mirrored: tuple[str, ...]
     sandbox_kept: bool
-    #: The changes the run shipped. Empty by construction until the refactor
-    #: engine exists (SPEC §3.11) — this release's payload is the envelope.
+    #: The subject line of each change the run committed, in commit order.
     changes: tuple[str, ...] = ()
+    #: One line per change that was made, failed verification and was reverted.
+    #: Kept rather than swallowed: SPEC §3.10 wants the failure in the log.
+    dropped: tuple[str, ...] = ()
+    #: Why the run shipped nothing at all, when that is the answer. A tier
+    #: whose verification could not run declines wholesale rather than
+    #: proceeding unverified.
+    declined: str = ""
 
     def summary(self) -> tuple[str, ...]:
         """The run, one fact per line — greppable from an overnight log."""
@@ -79,9 +88,13 @@ class RunRecord:
             _line("branch", self.branch),
             _line(
                 "changes",
-                f"{len(self.changes)} (this release ships the safety envelope only)",
+                f"{len(self.changes)} committed, {len(self.dropped)} dropped",
             ),
         ]
+        lines += [f"  + {subject}" for subject in self.changes]
+        lines += [f"  - {note}" for note in self.dropped]
+        if self.declined:
+            lines.append(f"  ! nothing shipped: {self.declined}")
         return tuple(lines)
 
     def _relative(self, path: Path) -> str:
@@ -127,9 +140,8 @@ def _perform(
         branch=f"{BRANCH_PREFIX}{run_id}",
     )
 
-    # The payload. Deliberately empty: the envelope is what this release ships,
-    # and proving it holds around nothing is what makes it worth trusting
-    # around something.
+    # The payload, inside the envelope that was just proven around it.
+    committed, dropped, declined = _refactor(sandbox, first_party.files)
 
     if not keep_sandbox:
         _sandbox.destroy(root, sandbox)
@@ -146,7 +158,40 @@ def _perform(
         files=first_party.files,
         mirrored=sandbox.mirrored,
         sandbox_kept=keep_sandbox,
+        changes=committed,
+        dropped=dropped,
+        declined=declined,
     )
+
+
+def _refactor(
+    sandbox: _sandbox.Sandbox, files: tuple[str, ...]
+) -> tuple[tuple[str, ...], tuple[str, ...], str]:
+    """Run Tier 0 in the sandbox, committing each change that verifies.
+
+    The day's uncommitted work is committed first, on its own. Without that,
+    every refactoring commit would arrive carrying whatever the developer had
+    left unsaved in the same file, and the per-commit review surface SPEC §3.9
+    is built on would show two authors' work as one diff.
+    """
+    worktree = sandbox.worktree
+    if _git.pending_changes(worktree):
+        _git.commit_all(worktree, _MIRRORED_COMMIT)
+
+    committed: list[str] = []
+    dropped: list[str] = []
+    try:
+        for change in tier0.refactor(worktree, files):
+            if not change.kept:
+                dropped.append(change.note())
+                continue
+            _git.commit_paths(worktree, (change.path,), change.message())
+            committed.append(change.subject())
+    except tier0.Unverifiable as failure:
+        # Raised before any file is edited, so there is nothing to unwind —
+        # only something to say. Verification that cannot run is not a verdict.
+        return tuple(committed), tuple(dropped), str(failure)
+    return tuple(committed), tuple(dropped), ""
 
 
 def _require_repository(root: Path, *, init_git: bool) -> None:
@@ -226,6 +271,14 @@ def _line(label: str, value: str) -> str:
 def _count(items: tuple[str, ...], noun: str) -> str:
     return f"{len(items)} {noun}" + ("" if len(items) == 1 else "s")
 
+
+_MIRRORED_COMMIT = """\
+chore(polish): the working tree as Polish found it
+
+The uncommitted work replayed from the working tree into the sandbox, so that
+every refactoring commit above this one is a diff of Polish's work alone.
+Nothing in this commit was written by Polish.
+"""
 
 _NOT_A_REPOSITORY = """\
 {root} is not a git repository.
