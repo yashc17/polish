@@ -109,7 +109,12 @@ class Change:
         return f"{self.path}: {self.evidence[0]}"
 
 
-def refactor(worktree: Path, files: Sequence[str]) -> Iterator[Change]:
+def refactor(
+    worktree: Path,
+    files: Sequence[str],
+    *,
+    verify_against: Sequence[str] | None = None,
+) -> Iterator[Change]:
     """Refactor `files` inside `worktree`, yielding each change once settled.
 
     Every yielded change has already been decided: a kept one is on disk and
@@ -120,6 +125,15 @@ def refactor(worktree: Path, files: Sequence[str]) -> Iterator[Change]:
     and no change depends on another. That independence is what makes dropping
     any single commit safe (SPEC §4.7).
 
+    `verify_against` is the file set the **type check** covers, defaulting to
+    `files`. The two are separate because gate 3 is the only gate that can see
+    a binding referenced from another file, so its surface decides what
+    "provably behaviour-preserving" means. Once SPEC §3.6 lets a run refactor a
+    scope rather than the whole repository, passing the scope here as well
+    would quietly narrow the proof along with the work — and a removal that
+    breaks a file just outside the scope would ship. The scope may narrow what
+    Polish *edits*; it may not narrow what Polish *checks*.
+
     Raises `Unverifiable` if the type check cannot establish a baseline. That
     happens before anything is edited, so the worktree is untouched.
     """
@@ -127,7 +141,11 @@ def refactor(worktree: Path, files: Sequence[str]) -> Iterator[Change]:
     if not removals:
         return
 
-    checker = _typecheck.Checker(worktree, files, cache=worktree.parent / CACHE_DIR)
+    checker = _typecheck.Checker(
+        worktree,
+        files if verify_against is None else verify_against,
+        cache=worktree.parent / CACHE_DIR,
+    )
     baseline = checker.run()
 
     for removal in removals:

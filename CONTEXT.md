@@ -46,8 +46,9 @@ the sandbox absolutely; the machine is not isolated from it at all
 ([ADR 0002](docs/adr/0002-refuse-non-git-repositories.md), SPEC §3.3).
 
 **Workspace** — `.polish/` at the repo root: everything Polish writes into a
-repository, and nothing else. Ignored by its own `.gitignore`, because Polish
-never edits the user's.
+repository, and nothing else — the observer's store, the raw snapshots, the
+sandboxes, and the watermark the next run scopes from. Ignored by its own
+`.gitignore`, because Polish never edits the user's.
 
 **Mirrored work** — the uncommitted changes replayed from the working tree into
 the sandbox, which is otherwise checked out from `HEAD`. Without it a run would
@@ -138,7 +139,39 @@ absent data read as quiet produces an unsafe edit.
 
 **Cold parse** — rebuilding the graph from the tree, ignoring the store. The
 fallback whenever the store is missing, version-skewed, unreadable or stale. Its
-existence is why a stale graph is never a correctness problem, only a cost.
+existence is why a stale graph is never a correctness problem, only a cost. The
+cost is paid in scope: a cold-parsed run sweeps, because the graph it rebuilt is
+correct and the history it could not rebuild is what says a file was quiet.
+
+**Scope** — the first-party files one run will refactor, and why each of them is
+there. Decided by `polish.scope.select()` before the tier probe, and printed by
+`polish run` as `scope` / `why` plus one line per file. Say *scope* for the set,
+and *sweep* or *incremental* for which kind it is.
+
+**Full sweep** — a scope that is the whole first-party set: what the first run
+does (SPEC §3.6), what `--full` asks for, and what every widening fallback
+resolves to. *Incremental* is its counterpart — the changed files and their
+closure. The scope narrows what Polish **edits** and never what it **checks**:
+Tier 0's type check and the tier probe both still see the whole repository.
+
+**Dependency closure** — the changed files, everything they transitively import,
+and everything that transitively imports them. Two separate walks from the same
+seeds, unioned — never one walk that changes direction, which is the undirected
+connected component and, in any package with an `__init__.py`, the whole package.
+Walked over the union of the previous run's import edges and today's, because the
+edge that stranded a function is by definition one today's graph no longer has.
+See [ADR 0008](docs/adr/0008-the-incremental-scope-is-a-closure-over-two-runs-graphs.md).
+
+**Watermark** — the record of the tree as the previous run found it, at
+`.polish/last-run.json`: a digest and the import edges per file. Written at the
+*end* of a run, because it is a claim that the tree was looked at. Every way of
+failing to read one resolves to a full sweep. Say *watermark*, not "cache" —
+what it holds is a claim, not a saving.
+
+**Unwitnessed** — a file byte-identical to the watermark whose history has a hole
+in it. Scoped in anyway. This is **churn**'s rule one layer up: reading "the
+bytes match" as "nothing happened here" is the same mistake as reading a gap as
+quiet.
 
 **Store** — what the observer keeps inside the workspace: `graph.db` (SQLite),
 `meta.json` and `daemon.pid`. Say *store* for the observer's state and
