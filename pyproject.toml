@@ -36,6 +36,6 @@ target-version = "py311"
 select = ["E", "F", "I", "UP", "B", "SIM"]
 
 [tool.ruff.lint.isort]
-# `corpus_support` is a test-suite module reached via pytest's rootdir, not an
-# installed package, so ruff needs telling that it is ours.
-known-first-party = ["polish", "corpus_support"]
+# `conftest` and `corpus_support` are test-suite modules reached via pytest's
+# rootdir, not installed packages, so ruff needs telling that they are ours.
+known-first-party = ["polish", "conftest", "corpus_support"]
