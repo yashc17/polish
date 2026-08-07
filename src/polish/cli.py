@@ -15,7 +15,7 @@ import sys
 from collections.abc import Sequence
 from pathlib import Path
 
-from polish import __version__, envelope
+from polish import __version__, envelope, observer
 from polish.firstparty import NotAPythonProject, scan
 
 EXIT_OK = 0
@@ -41,6 +41,34 @@ def build_parser() -> argparse.ArgumentParser:
         ),
     )
     scan_command.add_argument(
+        "path",
+        nargs="?",
+        default=".",
+        type=Path,
+        help="repository root (default: the current directory)",
+    )
+
+    observe_command = subcommands.add_parser(
+        "observe",
+        help="run and inspect the observer daemon",
+        description=(
+            "The observer daemon watches the working tree during the day and "
+            "maintains the code graph and the intra-day change history in "
+            f"{observer.STORE_DIR}/. It is an ordinary process holding an "
+            "ordinary pidfile: `watch` runs it in the foreground, `start` "
+            "detaches it, and `kill` works as well as `stop` does."
+        ),
+    )
+    observe_command.add_argument(
+        "action",
+        choices=("start", "stop", "status", "watch", "compact"),
+        help=(
+            "start: detach a daemon · stop: signal it · status: what is stored "
+            "and where · watch: run in the foreground · compact: apply "
+            "retention and reclaim space"
+        ),
+    )
+    observe_command.add_argument(
         "path",
         nargs="?",
         default=".",
@@ -86,6 +114,8 @@ def main(argv: Sequence[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
     if args.command == "scan":
         return _scan(args.path)
+    if args.command == "observe":
+        return _observe(args.action, args.path)
     if args.command == "run":
         return _run(args.path, init_git=args.init_git, keep_sandbox=args.keep_sandbox)
     raise AssertionError(f"unhandled command: {args.command}")  # pragma: no cover
@@ -99,6 +129,35 @@ def _scan(path: Path) -> int:
         return EXIT_DECLINED
     for relative in result.files:
         print(relative)
+    return EXIT_OK
+
+
+def _observe(action: str, path: Path) -> int:
+    """Drive the daemon. Only `watch` and `compact` need a Python project.
+
+    `status` and `stop` deliberately do not: someone who has just found a
+    `.polish/` directory in a repo Polish no longer recognises still needs to be
+    able to ask what it is and make it go away.
+    """
+    root = Path(path).resolve()
+    if action == "status":
+        print(observer.describe(root))
+        return EXIT_OK
+    if action == "stop":
+        pid = observer.stop(root)
+        print(f"stopped pid {pid}" if pid else f"no observer running for {root}")
+        return EXIT_OK
+    try:
+        if action == "start":
+            pid = observer.start(root)
+            print(f"observing {root} (pid {pid})")
+        elif action == "watch":
+            observer.observe(root)
+        elif action == "compact":
+            observer.compact(root)
+    except (NotAPythonProject, observer.ObserverFailedToStart) as declined:
+        print(f"polish: {declined}", file=sys.stderr)
+        return EXIT_DECLINED
     return EXIT_OK
 
 
