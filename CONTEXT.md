@@ -46,7 +46,7 @@ repaired by re-parsing, because the tree is the source of truth.
 `git diff` erases: code written at 2pm and deleted at 5pm, and how often a symbol
 was rewritten. *Not* verifiable — nothing can reconstruct it after the fact.
 Distinguishing this from the code graph is the whole of
-[ADR 0002](docs/adr/0002-observer-state-in-a-self-ignoring-sqlite-store.md).
+[ADR 0003](docs/adr/0003-observer-state-in-a-self-ignoring-sqlite-store.md).
 
 **Uptime window** — a stretch the observer was actually watching. Recorded, so
 that the stretches it was not are visible rather than invisible.

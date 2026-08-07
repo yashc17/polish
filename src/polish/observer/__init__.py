@@ -22,7 +22,7 @@ That produces the asymmetry the whole module is shaped around:
   rewritten four times, which is an unsafe edit caused by missing data rather
   than by wrong data. `Churn.count` raises rather than let that happen.
 
-See ADR 0002 for the storage decision.
+See ADR 0003 for the storage decision.
 """
 
 from __future__ import annotations
@@ -65,7 +65,7 @@ stop = _process.stop
 #: Poll interval. The daemon polls rather than subscribing to filesystem events
 #: on purpose: inotify watch limits, editors that save by atomic rename, and
 #: network filesystems all drop events silently, and a watcher that believes it
-#: saw everything is exactly the failure ADR 0002 refuses to trust.
+#: saw everything is exactly the failure ADR 0003 refuses to trust.
 INTERVAL_SECONDS = 2.0
 
 #: Cycles between retention sweeps. Bounds do not need per-poll precision, and
@@ -289,7 +289,7 @@ def compact(
 ) -> None:
     """Apply retention and reclaim the space. Run after a night run.
 
-    Both bounds are parameters because both are guesses. ADR 0002 records 14
+    Both bounds are parameters because both are guesses. ADR 0003 records 14
     days and 100 MB as starting numbers chosen without data, and a number nobody
     can move is a number nobody will ever correct.
     """

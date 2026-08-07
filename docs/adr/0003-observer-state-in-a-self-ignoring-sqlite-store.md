@@ -1,4 +1,4 @@
-# ADR 0002 — Observer state in a self-ignoring SQLite store, with history distrusted
+# ADR 0003 — Observer state in a self-ignoring SQLite store, with history distrusted
 
 **Status:** Accepted · 2026-08-06
 **Context:** [#19](https://github.com/yashc17/polish/issues/19), resolving

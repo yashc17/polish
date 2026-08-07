@@ -1,6 +1,6 @@
 """The store: SQLite in a `.polish/` directory that ignores itself.
 
-Format and location are ADR 0002. The two properties that decide most of this
+Format and location are ADR 0003. The two properties that decide most of this
 module:
 
 * **Concurrency.** The daemon writes all day while a night run reads. WAL mode
@@ -35,7 +35,7 @@ META = "meta.json"
 PID_FILE = "daemon.pid"
 
 #: Starting numbers, accepted without strong feelings and tunable once there is
-#: real data from a churning repo. See ADR 0002.
+#: real data from a churning repo. See ADR 0003.
 RETENTION_DAYS = 14
 MAX_BYTES = 100 * 1024 * 1024
 

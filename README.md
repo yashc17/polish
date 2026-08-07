@@ -61,7 +61,7 @@ If the observer was not running when something changed, Polish reports that
 file's churn as **UNKNOWN, never as "no churn"** — reading absent data as quiet
 would let it confidently deduplicate a function that had been rewritten four
 times. See
-[ADR 0002](docs/adr/0002-observer-state-in-a-self-ignoring-sqlite-store.md).
+[ADR 0003](docs/adr/0003-observer-state-in-a-self-ignoring-sqlite-store.md).
 
 ### `polish scan` — the first-party file set
 
