@@ -23,7 +23,8 @@ next day.
 ## Status
 
 Early. Three commands work: `polish scan`, `polish observe` and `polish run`.
-The run probes which tier your repository has earned, then makes edits: **Tier
+The run scopes itself to what changed since the last one plus its dependency
+closure, probes which tier your repository has earned, then makes edits: **Tier
 0** removes unused imports it can prove are safe to remove, one reviewable
 commit each. On a **Tier 1** repository the run also characterizes your code
 before touching it — flaky tests are found and quarantined, behaviour is traced
@@ -78,6 +79,8 @@ snapshot  .polish/snapshots/raw/2026-08-07 (6 files)
 mirrored  2 uncommitted files
 sandbox   .polish/runs/2026-08-07 (removed)
 branch    polish/2026-08-07
+scope     full sweep: 5 first-party files in scope
+why       first run: no record of a previous run at .polish/last-run.json, so there is nothing to be incremental against
 tier      1 (characterization)
 reason    a test suite ran, and first-party modules import cleanly
 gate 1    pass venv: nothing declared; the sandbox virtualenv is enough
@@ -120,6 +123,53 @@ A run copies your first-party source to a dated raw snapshot, checks a dated
 branch out into its own git worktree with its own virtualenv, works there, and
 leaves your working tree byte-identical — `git status` reads exactly as it did
 before.
+
+### Scope — one big pass, then only what moved
+
+The first run sweeps the whole repository, once, while you are paying attention.
+Every run after it looks at **the files that changed since the last run, plus
+their dependency closure** — and says which files, and why:
+
+```console
+$ polish run
+run       2026-08-07.3
+...
+scope     incremental: 5 first-party files in scope
+why       1 changed since run 2026-08-07.2; 4 pulled in by the dependency closure
+  ~ app/slug.py
+  + app/__init__.py
+  + app/cli.py
+  + app/loader.py
+  + tests/test_app.py
+```
+
+`~` changed · `?` unchanged, but the observer was not watching · `-` deleted
+since the last run · `+` pulled in by the closure.
+
+**The closure is the point.** Scoping to the changed files alone would make
+every night after the first quietly less safe than the first: deleting a caller
+today can strand a function three files away, and no diff of changed files will
+ever surface that. So Polish walks the import graph out from what changed —
+both to what those files import and to what imports them — over the union of
+today's graph and the one the last run recorded. The edge that stranded the
+function is, by definition, one today's graph no longer has.
+
+Three things make a run sweep the whole repository instead, and all three widen
+the scope rather than narrow it:
+
+- there is no record of a previous run in `.polish/last-run.json`;
+- the observer's store could not be believed, so the graph was cold-parsed —
+  with no intra-day history, a file changed and changed back would read as
+  untouched. **A repository with no observer daemon running sweeps every
+  night**, which is the honest consequence of the daemon being the only thing
+  that witnesses the day;
+- you passed `--full`, which is how to ask for the first run's deep pass again.
+
+The scope narrows what Polish *edits*. It never narrows what Polish *checks*:
+Tier 0's type check always covers the whole first-party set, because it is the
+only gate that can see a binding referenced from a file just outside the scope.
+The tier probe likewise still judges the whole repository. See
+[ADR 0008](docs/adr/0008-the-incremental-scope-is-a-closure-over-two-runs-graphs.md).
 
 ### The tier probe — what Polish is allowed to claim about your repo
 
@@ -371,6 +421,7 @@ polish/
 │   ├── firstparty/   #   first-party source detection
 │   ├── observer/     #   the daytime daemon: code graph and change history
 │   ├── probe/        #   the tier probe: four gates and the command allowlist
+│   ├── scope/        #   what a run looks at: the changed files and their closure
 │   └── tier0/        #   deterministic codemods, proven rather than tested
 ├── tests/            # suite, plus two hand-labelled corpora
 ├── scripts/          # corpus capture and reporting

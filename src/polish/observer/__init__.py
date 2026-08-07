@@ -149,9 +149,13 @@ class Observation:
     def dependents(self, *paths: str) -> frozenset[str]:
         """`paths` plus everything that transitively imports them.
 
-        This is the dependency closure SPEC §3.6 scopes an incremental run by:
-        "deleting a caller today can strand a function three files away, and
-        `git diff` will never surface that".
+        One half of the closure SPEC §3.6 scopes an incremental run by, and the
+        half that answers "what breaks if this changes". The other half is
+        forward — §3.6's own example, "deleting a caller today can strand a
+        function three files away", orphans code the edited file *imports* — so
+        `polish.scope` walks both, over a graph that also carries the previous
+        run's edges. The edge that stranded the function is, by definition, one
+        this graph no longer has.
         """
         reverse: dict[str, set[str]] = {}
         for importer, targets in self._imports.items():

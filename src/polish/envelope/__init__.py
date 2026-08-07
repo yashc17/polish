@@ -22,10 +22,12 @@ from datetime import date
 from itertools import count
 from pathlib import Path
 
+from polish import scope as _scope
 from polish import tier0
 from polish.characterize import Characterization, Policy, characterize
 from polish.firstparty import FirstPartySet, scan
 from polish.probe import Budget, TierVerdict, probe
+from polish.scope import Scope
 
 from . import _git, _sandbox, _snapshot
 
@@ -75,6 +77,9 @@ class RunRecord:
     #: that a `RunRecord` can be built in tests without one; every real run has
     #: a verdict, because the tier chooses the engine (SPEC §2, step 3).
     tier: TierVerdict | None = None
+    #: What the run looked at and why (SPEC §2 step 2, §3.6). Optional on the
+    #: same terms as `tier`: every real run has one.
+    scope: Scope | None = None
     #: What was characterized, when the probe said Tier 1. `None` on a Tier 0
     #: repository, where there is no execution to record — a distinction the
     #: run log keeps, because "nothing to characterize" and "characterized
@@ -99,6 +104,12 @@ class RunRecord:
             _line("sandbox", f"{self._relative(sandbox)} ({state})"),
             _line("branch", self.branch),
         ]
+        # Step 2 of the pipeline, and issue #20's last acceptance criterion: the
+        # run log states what was in scope and why. A scope is a safety decision
+        # (SPEC §3.6), so a reviewer who cannot see which files were skipped
+        # cannot tell a careful night from a lazy one.
+        if self.scope is not None:
+            lines += self.scope.summary()
         # The probe's own evidence, verbatim. Issue #12 requires the verdict to
         # reach the run log with what produced it, including every command that
         # was executed: a user whose repository landed Tier 0 is owed the
@@ -132,10 +143,16 @@ def run(
     *,
     init_git: bool = False,
     keep_sandbox: bool = False,
+    full: bool = False,
     budget: Budget | None = None,
     policy: Policy | None = None,
 ) -> RunRecord:
     """Perform a night-shift run against the repository at `root`.
+
+    `full` forces the whole-repo sweep SPEC §3.6 gives the first run. Without
+    it, a repository that has been run before is scoped to what changed plus
+    its dependency closure — so the flag is how a whole-repo pass is asked for
+    a second time, and the only thing that widens a scope on request.
 
     `budget` bounds the tier probe and `policy` bounds characterization.
     Injectable for the same reason the observer's bounds are: a limit with no
@@ -157,6 +174,7 @@ def run(
             first_party,
             init_git=init_git,
             keep_sandbox=keep_sandbox,
+            full=full,
             budget=budget,
             policy=policy,
         )
@@ -173,6 +191,7 @@ def _perform(
     *,
     init_git: bool,
     keep_sandbox: bool,
+    full: bool,
     budget: Budget | None = None,
     policy: Policy | None = None,
 ) -> RunRecord:
@@ -184,6 +203,13 @@ def _perform(
     snapshot = _snapshot.write(
         root, first_party.files, _snapshot_dir(workspace, run_id)
     )
+
+    # Step 2 of SPEC §2's pipeline: full sweep on the first run, and afterwards
+    # what changed plus its dependency closure. Decided against the working
+    # tree, before the sandbox exists, because the question is "what happened
+    # here today?" and the sandbox is a checkout of HEAD that has not happened
+    # to anybody.
+    selection = _scope.select(root, first_party.files, workspace=workspace, full=full)
 
     run_dir = workspace / "runs" / run_id
     sandbox = _sandbox.create(
@@ -200,6 +226,14 @@ def _perform(
     # It runs against `sandbox.worktree`, never `root`: the probe installs
     # packages and executes the repository's own test suite, which is not
     # something to do to a working tree Polish has promised not to touch (§4.9).
+    #
+    # It sees the whole first-party set even on an incremental run, deliberately.
+    # The verdict is per-repository today (#28 makes it per-symbol), so computing
+    # it from a subset would be a narrower claim wearing the same name — and the
+    # subset is not cheaper where it counts, because gates 1 and 2 take no file
+    # set at all. Scoping would only shrink gate 3, which is demote-only, so the
+    # single effect would be to make demotion less likely. That is false Tier 1,
+    # the one error the probe exists to prevent.
     verdict = probe(
         sandbox.worktree,
         venv=sandbox.venv,
@@ -212,6 +246,14 @@ def _perform(
     # suite's flake baseline, the traced recordings, and the per-symbol coverage
     # that question #4 made the input to tiering. On a Tier 0 repository there
     # is no execution to record, so there is nothing here to do.
+    #
+    # Whole first-party set, not the scope, for the same reason as the probe
+    # above and one more of its own. The suite runs whole either way — pytest
+    # discovers from the rootdir — so the scope could only narrow which traced
+    # calls become oracles, and an oracle outside the scope is not waste: it is
+    # exactly what catches a scoped edit stranding a caller three files away.
+    # That is the failure SPEC §3.6 built the dependency closure for, and
+    # verification is the layer that has to notice it rather than assume it.
     characterization = (
         characterize(
             sandbox.worktree,
@@ -224,7 +266,14 @@ def _perform(
     )
 
     # The payload, inside the envelope that was just proven around it.
-    committed, dropped, declined = _refactor(sandbox, first_party.files)
+    committed, dropped, declined = _refactor(
+        sandbox, selection.files, first_party.files
+    )
+
+    # Only now, and only here. A run that raised on the way down has not looked
+    # at what its scope claimed, and the next run should sweep rather than
+    # believe a watermark no work stands behind.
+    _scope.record(workspace, selection, run_id=run_id)
 
     if not keep_sandbox:
         _sandbox.destroy(root, sandbox)
@@ -245,14 +294,21 @@ def _perform(
         dropped=dropped,
         declined=declined,
         tier=verdict,
+        scope=selection,
         characterization=characterization,
     )
 
 
 def _refactor(
-    sandbox: _sandbox.Sandbox, files: tuple[str, ...]
+    sandbox: _sandbox.Sandbox, scoped: tuple[str, ...], every: tuple[str, ...]
 ) -> tuple[tuple[str, ...], tuple[str, ...], str]:
     """Run Tier 0 in the sandbox, committing each change that verifies.
+
+    `scoped` is what may be edited (SPEC §3.6); `every` is the whole first-party
+    set, and is what the type check covers. The scope narrows the work and never
+    the proof: Tier 0's type check is the only gate that can see a binding
+    referenced from another file, so checking only the scope would let a removal
+    that breaks a file just outside it ship as "provably behaviour-preserving".
 
     The day's uncommitted work is committed first, on its own. Without that,
     every refactoring commit would arrive carrying whatever the developer had
@@ -266,7 +322,7 @@ def _refactor(
     committed: list[str] = []
     dropped: list[str] = []
     try:
-        for change in tier0.refactor(worktree, files):
+        for change in tier0.refactor(worktree, scoped, verify_against=every):
             if not change.kept:
                 dropped.append(change.note())
                 continue
