@@ -1,0 +1,53 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+# A superseded run tells you nothing useful; cancel it and keep the latest.
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        # The floor declared by requires-python, the version developed against,
+        # and the newest release — so a break shows up on the edge that caused
+        # it rather than as one undifferentiated red X.
+        python-version: ["3.11", "3.12", "3.13"]
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+
+      # Deliberately the same three commands the README tells contributors to
+      # run. CI that installs differently from the documented setup verifies
+      # something nobody can reproduce locally.
+      - name: Install
+        run: |
+          uv venv --python ${{ matrix.python-version }}
+          uv pip install -e . pytest ruff
+
+      - name: Lint
+        run: .venv/bin/ruff check src tests scripts
+
+      - name: Format
+        run: .venv/bin/ruff format --check src tests scripts
+
+      - name: Test
+        run: .venv/bin/pytest -q
+
+      # The precision/recall numbers are the product claim, so put them in the
+      # log where they can be read without reproducing a failure locally.
+      # Exits non-zero on its own if the corpus drops below the floor.
+      - name: Detection metrics
+        run: .venv/bin/python scripts/corpus_report.py

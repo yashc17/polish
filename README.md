@@ -1,5 +1,7 @@
 # Polish
 
+[![CI](https://github.com/yashc17/polish/actions/workflows/ci.yml/badge.svg)](https://github.com/yashc17/polish/actions/workflows/ci.yml)
+
 Autonomous "night-shift" code cleanup and refactoring agent.
 
 Polish runs asynchronously in a sandboxed environment to review the day's
