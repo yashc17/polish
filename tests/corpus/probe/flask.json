@@ -6,7 +6,7 @@
  "captured_on": "darwin python3.12.7",
  "note": "Second healthy repository, and the corpus's designed disagreement: 485 tests pass and every flask.* module imports, but the example apps under examples/celery/ need celery, which flask does not declare.",
  "label_rule": {
-  "reason": "The code Polish would refactor is characterizable, so a human says Tier 1. v1's per-repo rule disagrees: gate 3 demotes the whole repository for eight unimportable modules in examples/ and docs/. Labelled against the code deliberately \u2014 that gap is evidence for open question #4 (per-file tiering), not a bug to relabel away.",
+  "reason": "The code Polish would refactor is characterizable, so a human says Tier 1. The tier probe's per-repository verdict disagrees: gate 3 demotes the whole repository for eight unimportable modules in examples/ and docs/. Labelled against the code deliberately. Question #4 has since been answered in favour of per-symbol/per-path tiering, which makes this label correct and the per-repository verdict the thing that lags.",
   "expected_tier": 1
  },
  "recorded": {

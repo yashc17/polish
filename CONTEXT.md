@@ -61,9 +61,12 @@ repository, and therefore which engine and which claim it has earned. Run by
 **Tier 1** — the tier for a repository Polish *can* execute. Verification is
 characterization tests from real execution traces and the claim is **verified
 against recorded behaviour** (SPEC §3.1); *Tier 0* below is its counterpart.
-The verdict is per **repository**, not per file, for v1 — granularity is open
-question #4 and needs coverage data from #13. Never say "the repo is Tier 1"
-about anything the probe has not promoted.
+Granularity is **per symbol / per path**: an edit's tier is the *lowest*
+coverage tier among the symbols it touches ([question
+#4](https://github.com/yashc17/polish/issues/14)). The tier probe still returns
+one verdict for the whole repository, which #3 chose deliberately while #4 was
+open; that gap is now a known one rather than a decision. Never say "the repo is
+Tier 1" about anything the probe has not promoted.
 
 **Gate** — one hard filter in the probe, evaluated in order: *venv*, *suite*,
 *imports*, *entrypoint*. Hard, not scored: a gate cannot contribute partial

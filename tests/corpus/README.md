@@ -165,10 +165,13 @@ the example apps under `examples/celery/` and `docs/conf.py`, which need celery
 and sphinx, and v1's verdict is **per repository**, so gate 3 demotes the whole
 thing for eight unimportable modules.
 
-That gap is evidence bearing on [open question #4](../../docs/SPEC.md) (per-file
-tiering), which is evidence-blocked on purpose. Relabelling it to match the code
-would delete the evidence. A false Tier 0 has no ceiling precisely so a row like
-this can sit in the corpus and be argued about with data.
+That gap was filed as evidence for [question
+#4](https://github.com/yashc17/polish/issues/14), and #4 has since been answered
+in favour of **per-symbol / per-path tiering** — so this row is now the worked
+example of why. Under the answered rule the label is simply correct and the
+probe's per-repository verdict is the thing lagging. **Do not relabel it to
+match the code.** A false Tier 0 has no ceiling precisely so a row like this can
+sit in the corpus and be argued about with data.
 
 ## Adding a repo
 
