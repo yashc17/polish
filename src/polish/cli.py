@@ -82,9 +82,11 @@ def build_parser() -> argparse.ArgumentParser:
         description=(
             "Perform a night-shift run. Polish copies the first-party source "
             "to a dated raw snapshot, checks a dated branch out into its own "
-            "worktree with its own virtualenv, does its work there, and leaves "
-            "the working tree byte-identical. This release removes unused "
-            "imports at Tier 0: every change is proven behaviour-preserving by "
+            "worktree with its own virtualenv, probes whether the repository "
+            "can be executed, does its work there, and leaves the working tree "
+            "byte-identical. The tier verdict and every command the probe ran "
+            "are printed with the run. This release removes unused imports at "
+            "Tier 0: every change is proven behaviour-preserving by "
             "AST-equivalence and a type check before it is committed, and one "
             "that fails either is reverted and reported rather than shipped."
         ),

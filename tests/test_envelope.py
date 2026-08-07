@@ -23,6 +23,7 @@ import pytest
 from conftest import commit_repo, git, materialise
 from polish import envelope
 from polish.firstparty import scan
+from polish.probe import Budget, Tier
 
 #: A repository with something of every kind in it: source, a unicode source
 #: file, an ignored artifact, a non-Python file, and a virtualenv — 30 000 of
@@ -185,6 +186,62 @@ def test_the_workspace_ignores_itself_without_touching_the_users_gitignore(
 
     assert (root / ".polish" / ".gitignore").read_text() == "*\n"
     assert (root / ".gitignore").read_text() == REPO[".gitignore"]
+
+
+def test_the_run_log_carries_the_tier_verdict_and_its_evidence(completed_run):
+    """Issue #12, criterion 1: the verdict reaches the log with what produced it.
+
+    All four gates, always, including the ones that were never evaluated. A log
+    that silently omitted a gate would read as though that gate had passed.
+    """
+    record = completed_run.record
+    summary = record.summary()
+
+    assert record.tier is not None
+    assert record.tier.tier is Tier.ZERO  # REPO has no suite and no entry point
+    assert sum(1 for line in summary if line.startswith("gate ")) == 4
+    assert any("no execution source" in line for line in summary)
+    # The tier is decided before the payload and reads that way (SPEC §2).
+    labels = [line.split()[0] for line in summary]
+    assert labels.index("tier") < labels.index("changes")
+
+
+def test_the_probe_runs_in_the_sandbox_and_never_in_the_working_tree(make_git_repo):
+    """The probe executes the repository's code, so where it does that is §4.9.
+
+    The opted-in entry point writes a file into its own working directory. It
+    lands in the sandbox worktree and nowhere near the tree Polish was pointed
+    at, which is the only way to demonstrate the separation with something the
+    repository itself did rather than with an absence.
+    """
+    root = make_git_repo(
+        {
+            **REPO,
+            "demo/touch.py": (
+                "from pathlib import Path\n\n"
+                'if __name__ == "__main__":\n'
+                '    Path("probe-was-here").write_text("x")\n'
+            ),
+            "polish.toml": '[probe]\nentrypoint = "demo.touch"\n',
+        }
+    )
+
+    record = envelope.run(root, keep_sandbox=True)
+
+    assert record.tier.tier is Tier.ONE  # promoted by the entry point, not imports
+    assert not (root / "probe-was-here").exists()
+    assert (record.worktree / "probe-was-here").is_file()
+
+
+def test_a_probe_budget_of_nothing_still_produces_a_run(make_git_repo):
+    """An unattended run survives a probe that gets nowhere. It just learns less."""
+    root = make_git_repo({**REPO, "polish.toml": '[probe]\nentrypoint = "demo.core"\n'})
+
+    record = envelope.run(root, budget=Budget(total_seconds=0.0))
+
+    assert record.tier.tier is Tier.ZERO
+    assert record.branch.startswith(envelope.BRANCH_PREFIX)
+    assert record.snapshot.is_dir()
 
 
 def test_the_sandbox_is_removed_when_the_run_ends(make_git_repo):

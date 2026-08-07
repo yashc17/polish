@@ -1,8 +1,11 @@
 #!/usr/bin/env python3
-"""Print precision and recall of `scan()` over the committed corpus.
+"""Print both corpus metrics: detection precision/recall, and tier accuracy.
 
-The same numbers the regression test enforces, without needing to read a test
-failure to see them. Run from the repo root:
+The same numbers the regression tests enforce, without needing to read a test
+failure to see them. The two floors are the same product decision applied to
+two components — a file wrongly called first-party and a repository wrongly
+promoted to Tier 1 both mean Polish acting confidently on something it cannot
+account for. Run from the repo root:
 
     python scripts/corpus_report.py
 """
@@ -25,9 +28,16 @@ from corpus_support import (  # noqa: E402
     pooled,
 )
 from polish.firstparty import NotAPythonProject, scan  # noqa: E402
+from polish.probe import probe  # noqa: E402
+from probe_corpus_support import (  # noqa: E402
+    FALSE_TIER_ONE_CEILING,
+    TierMeasurement,
+    format_tier_report,
+    load_probe_manifests,
+)
 
 
-def main() -> int:
+def detection() -> int:
     measurements = []
     declined = []
     for manifest in load_manifests():
@@ -57,6 +67,38 @@ def main() -> int:
         print("\nBELOW FLOOR", file=sys.stderr)
         return 1
     return 0
+
+
+def tiering() -> int:
+    """Replay the probe corpus. Offline: no venv is built and nothing executes."""
+    measurements = []
+    for manifest in load_probe_manifests():
+        with TemporaryDirectory() as directory:
+            root = manifest.materialise(Path(directory))
+            verdict = probe(root, venv=root / ".absent", runner=manifest.replay())
+        measurements.append(
+            TierMeasurement(
+                name=manifest.name,
+                expected=manifest.expected,
+                observed=verdict.tier,
+            )
+        )
+
+    print(format_tier_report(measurements))
+    promoted = [row.name for row in measurements if row.false_tier_one]
+    if len(promoted) > FALSE_TIER_ONE_CEILING:
+        print(f"\nFALSE TIER 1: {', '.join(promoted)}", file=sys.stderr)
+        return 1
+    return 0
+
+
+def main() -> int:
+    print("first-party detection")
+    print("=" * 66)
+    failed = detection()
+    print("\n\ntier probe")
+    print("=" * 66)
+    return failed or tiering()
 
 
 if __name__ == "__main__":
