@@ -26,6 +26,33 @@ would name their own package that.
 code (`package-dir`, `packages.find.where`, poetry `packages`, flit `module`).
 Grants exemption from ignore rules, not from markers.
 
+**Safety envelope** — the apparatus around an edit: snapshot, sandbox, branch,
+and the refusals that guard them. Built by `polish.envelope.run()` and driven by
+`polish run`. The envelope is the product, not the packaging — a change Polish
+cannot verify is a change Polish does not make.
+
+**Run** — one pass of the envelope, identified by a **run id**: today's date,
+suffixed `.2`, `.3` if the day already has runs. The id names the run's
+snapshot, its sandbox directory and its branch, so all three line up.
+
+**Snapshot** — the unedited copy of the first-party file set taken before any
+work begins, at `.polish/snapshots/raw/<run id>`. Say *raw snapshot* when
+distinguishing it from anything Polish produces later. It byte-matches the tree
+it was taken from, and is never overwritten.
+
+**Sandbox** — a git worktree checked out on the run's branch, plus its own
+virtualenv beside it. Where all work happens. The working tree is isolated from
+the sandbox absolutely; the machine is not isolated from it at all
+([ADR 0002](docs/adr/0002-refuse-non-git-repositories.md), SPEC §3.3).
+
+**Workspace** — `.polish/` at the repo root: everything Polish writes into a
+repository, and nothing else. Ignored by its own `.gitignore`, because Polish
+never edits the user's.
+
+**Mirrored work** — the uncommitted changes replayed from the working tree into
+the sandbox, which is otherwise checked out from `HEAD`. Without it a run would
+refactor the last commit rather than the day that just happened.
+
 **Corpus** — the hand-labelled real repositories in `tests/corpus/` that
 precision and recall are measured against. See `tests/corpus/README.md`.
 
@@ -34,6 +61,6 @@ precision and recall are measured against. See `tests/corpus/README.md`.
 the user's is far worse than missing one that is.
 
 Terms from `docs/SPEC.md` not yet exercised by code — *tier probe*, *Tier 0 /
-Tier 1*, *characterization*, *snapshot*, *observer daemon*, *refactor engine*,
-*verifier*, *reporter*, *change queue*, *repair attempt* — are defined there and
-move here as they get built.
+Tier 1*, *characterization*, *observer daemon*, *refactor engine*, *verifier*,
+*reporter*, *change queue*, *repair attempt* — are defined there and move here as
+they get built.

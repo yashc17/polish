@@ -15,7 +15,7 @@ import sys
 from collections.abc import Sequence
 from pathlib import Path
 
-from polish import __version__
+from polish import __version__, envelope
 from polish.firstparty import NotAPythonProject, scan
 
 EXIT_OK = 0
@@ -47,6 +47,38 @@ def build_parser() -> argparse.ArgumentParser:
         type=Path,
         help="repository root (default: the current directory)",
     )
+
+    run_command = subcommands.add_parser(
+        "run",
+        help="perform a night-shift run: snapshot, sandbox, branch",
+        description=(
+            "Perform a night-shift run. Polish copies the first-party source "
+            "to a dated raw snapshot, checks a dated branch out into its own "
+            "worktree with its own virtualenv, does its work there, and leaves "
+            "the working tree byte-identical. This release makes no edits: the "
+            "safety envelope is the payload."
+        ),
+    )
+    run_command.add_argument(
+        "path",
+        nargs="?",
+        default=".",
+        type=Path,
+        help="repository root (default: the current directory)",
+    )
+    run_command.add_argument(
+        "--init-git",
+        action="store_true",
+        help=(
+            "run git init and commit the tree first, if it is not a repository "
+            "yet — never done without this flag"
+        ),
+    )
+    run_command.add_argument(
+        "--keep-sandbox",
+        action="store_true",
+        help="leave the worktree and virtualenv in place for inspection",
+    )
     return parser
 
 
@@ -54,6 +86,8 @@ def main(argv: Sequence[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
     if args.command == "scan":
         return _scan(args.path)
+    if args.command == "run":
+        return _run(args.path, init_git=args.init_git, keep_sandbox=args.keep_sandbox)
     raise AssertionError(f"unhandled command: {args.command}")  # pragma: no cover
 
 
@@ -65,6 +99,17 @@ def _scan(path: Path) -> int:
         return EXIT_DECLINED
     for relative in result.files:
         print(relative)
+    return EXIT_OK
+
+
+def _run(path: Path, *, init_git: bool, keep_sandbox: bool) -> int:
+    try:
+        record = envelope.run(path, init_git=init_git, keep_sandbox=keep_sandbox)
+    except (NotAPythonProject, envelope.EnvelopeError) as declined:
+        print(f"polish: {declined}", file=sys.stderr)
+        return EXIT_DECLINED
+    for line in record.summary():
+        print(line)
     return EXIT_OK
 
 
