@@ -1,6 +1,11 @@
-"""The `polish scan` command contract: stdout, stderr, and exit code."""
+"""The command contract for `polish scan` and `polish run`.
+
+stdout, stderr and exit code — the whole surface an unattended scheduler sees.
+"""
 
 from __future__ import annotations
+
+from datetime import date
 
 from polish.cli import main
 
@@ -64,3 +69,36 @@ def test_exits_non_zero_when_every_python_file_was_excluded(make_repo, capsys):
     assert code == 1
     assert captured.out == ""
     assert "polish.toml" in captured.err
+
+
+def test_run_reports_the_snapshot_sandbox_and_branch_it_produced(make_git_repo, capsys):
+    repo = make_git_repo(
+        {"pyproject.toml": '[project]\nname = "demo"\n', "demo.py": "x = 1\n"}
+    )
+    today = date.today().isoformat()
+
+    code = main(["run", str(repo)])
+    captured = capsys.readouterr()
+
+    assert code == 0
+    assert captured.err == ""
+    reported = dict(line.split(maxsplit=1) for line in captured.out.splitlines())
+    assert reported["run"] == today
+    assert reported["snapshot"] == f".polish/snapshots/raw/{today} (1 file)"
+    assert reported["sandbox"] == f".polish/runs/{today} (removed)"
+    assert reported["branch"] == f"polish/{today}"
+    assert reported["changes"].startswith("0 ")
+
+
+def test_run_exits_non_zero_with_an_actionable_message_outside_a_repository(
+    make_repo, capsys
+):
+    repo = make_repo({"pyproject.toml": '[project]\nname = "demo"\n', "demo.py": ""})
+
+    code = main(["run", str(repo)])
+    captured = capsys.readouterr()
+
+    assert code == 1
+    assert captured.out == ""
+    assert "not a git repository" in captured.err
+    assert "polish run --init-git" in captured.err
