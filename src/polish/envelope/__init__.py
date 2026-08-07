@@ -23,6 +23,7 @@ from itertools import count
 from pathlib import Path
 
 from polish import tier0
+from polish.characterize import Characterization, Policy, characterize
 from polish.firstparty import FirstPartySet, scan
 from polish.probe import Budget, TierVerdict, probe
 
@@ -74,6 +75,11 @@ class RunRecord:
     #: that a `RunRecord` can be built in tests without one; every real run has
     #: a verdict, because the tier chooses the engine (SPEC §2, step 3).
     tier: TierVerdict | None = None
+    #: What was characterized, when the probe said Tier 1. `None` on a Tier 0
+    #: repository, where there is no execution to record — a distinction the
+    #: run log keeps, because "nothing to characterize" and "characterized
+    #: nothing" are different facts about a repository.
+    characterization: Characterization | None = None
 
     def summary(self) -> tuple[str, ...]:
         """The run, one fact per line — greppable from an overnight log."""
@@ -100,6 +106,11 @@ class RunRecord:
         # is a claim they have to take on faith.
         if self.tier is not None:
             lines += self.tier.summary()
+        # The quarantine list is here rather than behind a flag because issue
+        # #13 asks for it by name: a flaky suite is information the developer
+        # wants, and it explains why some code got less attention than expected.
+        if self.characterization is not None:
+            lines += self.characterization.summary()
         lines += [
             _line(
                 "changes",
@@ -122,12 +133,15 @@ def run(
     init_git: bool = False,
     keep_sandbox: bool = False,
     budget: Budget | None = None,
+    policy: Policy | None = None,
 ) -> RunRecord:
     """Perform a night-shift run against the repository at `root`.
 
-    `budget` bounds the tier probe. Injectable for the same reason the observer's
-    bounds are: a limit with no way to reach it in a test is a limit nobody has
-    ever seen work.
+    `budget` bounds the tier probe and `policy` bounds characterization.
+    Injectable for the same reason the observer's bounds are: a limit with no
+    way to reach it in a test is a limit nobody has ever seen work. `policy` is
+    also where N and M live (issue #5's flake policy), and it is read from
+    `[characterize]` in the repository's `polish.toml` when not passed.
     """
     root = Path(root)
     if not root.is_dir():
@@ -144,6 +158,7 @@ def run(
             init_git=init_git,
             keep_sandbox=keep_sandbox,
             budget=budget,
+            policy=policy,
         )
     except _git.GitError as failure:
         # Git's own failures reach the user as refusals rather than tracebacks.
@@ -159,6 +174,7 @@ def _perform(
     init_git: bool,
     keep_sandbox: bool,
     budget: Budget | None = None,
+    policy: Policy | None = None,
 ) -> RunRecord:
     _require_repository(root, init_git=init_git)
 
@@ -191,6 +207,22 @@ def _perform(
         budget=budget,
     )
 
+    # Step 4's prerequisite, and only on a repository that earned it. This is
+    # where the night's verification oracles come from (SPEC §3.1, §4.5): the
+    # suite's flake baseline, the traced recordings, and the per-symbol coverage
+    # that question #4 made the input to tiering. On a Tier 0 repository there
+    # is no execution to record, so there is nothing here to do.
+    characterization = (
+        characterize(
+            sandbox.worktree,
+            venv=sandbox.venv,
+            first_party=first_party.files,
+            policy=policy,
+        )
+        if verdict.tier_one
+        else None
+    )
+
     # The payload, inside the envelope that was just proven around it.
     committed, dropped, declined = _refactor(sandbox, first_party.files)
 
@@ -213,6 +245,7 @@ def _perform(
         dropped=dropped,
         declined=declined,
         tier=verdict,
+        characterization=characterization,
     )
 
 

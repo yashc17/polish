@@ -25,7 +25,10 @@ next day.
 Early. Three commands work: `polish scan`, `polish observe` and `polish run`.
 The run probes which tier your repository has earned, then makes edits: **Tier
 0** removes unused imports it can prove are safe to remove, one reviewable
-commit each.
+commit each. On a **Tier 1** repository the run also characterizes your code
+before touching it — flaky tests are found and quarantined, behaviour is traced
+into oracles, and coverage is reported per symbol. The Tier 1 *edits* those
+oracles exist to verify are not built yet.
 
 ### `polish observe` — the daytime observer
 
@@ -70,26 +73,48 @@ times. See
 ```console
 $ polish run
 run       2026-08-07
-commit    5829cb6
-snapshot  .polish/snapshots/raw/2026-08-07 (5 files)
+commit    5053339
+snapshot  .polish/snapshots/raw/2026-08-07 (6 files)
 mirrored  2 uncommitted files
 sandbox   .polish/runs/2026-08-07 (removed)
 branch    polish/2026-08-07
 tier      1 (characterization)
 reason    a test suite ran, and first-party modules import cleanly
 gate 1    pass venv: nothing declared; the sandbox virtualenv is enough
-gate 2    pass suite: 2 passing tests across 1 test files
+gate 2    pass suite: 7 passing tests across 2 test files
 gate 3    pass imports: 4 first-party modules import cleanly — which promotes nothing (SPEC §3.1)
 gate 4    skip entrypoint: not configured; never run without being asked
 ran       python -c import pytest
 ran       python -m pip install --only-binary :all: pytest
 ran       python -m pytest -q --tb=no -p no:cacheprovider
-ran       python -c import app, app.cli, app.loader, app.slug
+ran       python -c import app, app.loader, app.render, app.slug
+baseline  3x suite, 6 trusted, 1 quarantined
+  ~ tests/test_flaky.py::test_cache_warms_up (failed / passed / passed)
+oracles   5 kept, 1 discarded
+  - test_polish_app_loader.py::test_stamped_0 (did not reproduce on unmodified code (failed in all 3 replays))
+coverage  5 of 6 symbols at tier 1, 6 executed
+  app/loader.py: 2 symbols, 2 executed, 1 tier 1
+  app/render.py: 2 symbols, 2 executed, 2 tier 1
+  app/slug.py: 2 symbols, 2 executed, 2 tier 1
+ran       python -P -c import _polish_harness as _h; _h.suite()
+ran       python -P -c import _polish_harness as _h; _h.suite()
+ran       python -P -c import _polish_harness as _h; _h.suite()
+ran       python -P -c import _polish_harness as _h; _h.trace()
+ran       python -P -c import _polish_harness as _h; _h.oracles()
+ran       python -P -c import _polish_harness as _h; _h.oracles()
+ran       python -P -c import _polish_harness as _h; _h.oracles()
 changes   3 committed, 0 dropped
-  + refactor(imports): drop 3 unused imports from app/cli.py
   + refactor(imports): drop 1 unused import from app/loader.py
-  + refactor(imports): drop 1 unused import from app/slug.py
+  + refactor(imports): drop 1 unused import from app/render.py
+  + refactor(imports): drop 2 unused imports from app/slug.py
 ```
+
+Reading the middle of that: one test in this repository was not reproducible, so
+it is named and excluded. One recorded call — a function returning
+`time.time()` — did not survive replay, so its oracle was thrown away and
+`app/loader.py` is left with one of its two symbols uncharacterized. That is the
+whole design in three lines: what could not be established is *reported* rather
+than assumed.
 
 A run copies your first-party source to a dated raw snapshot, checks a dated
 branch out into its own git worktree with its own virtualenv, works there, and
@@ -132,6 +157,50 @@ Accuracy is measured against a second hand-labelled corpus (`tests/corpus/probe/
 — a healthy library, one needing API keys, one needing a GPU, one with no tests)
 and held to **zero false Tier 1** by a regression test. `python
 scripts/corpus_report.py` prints the confusion matrix.
+
+### Characterization — what Polish believes, and what it refuses to
+
+On a Tier 1 repository, before any edit, Polish works out what your code
+actually does and which tests it is entitled to trust.
+
+**Your suite is run three times.** Any test whose result is not identical every
+time is **quarantined**: excluded from the night's verification, named in the
+output, and unable to drop a change. During the run a failure is retried over
+two more full suite runs before it is believed. A flaky suite is information you
+want, which is why the names are printed rather than counted.
+
+**Polish's own generated tests are held to a stricter rule.** Behaviour is
+traced with `sys.settrace` while your suite runs, and each recorded call becomes
+a test asserting it still returns what it was observed returning. Each one is
+then replayed three times against unmodified code, and anything that varies is
+**discarded — never emitted**.
+
+The asymmetry is deliberate. A flaky test of yours *drops good work*. A flaky
+oracle of Polish's *can pass a broken change*, which is a false green on the one
+thing this tool sells. Polish owns its oracles, so it deletes them rather than
+working around them. Nothing is pinned to rescue one — freezing a clock or
+seeding an RNG would assert something about your code's behaviour that Polish
+has not observed, and a wrong pin is worse than no oracle because it looks like
+verification.
+
+Coverage is reported **per symbol**, not per repository, and a symbol reaches
+Tier 1 only if it has a surviving oracle. Code that ran but could not be
+characterized falls back to Tier 0. An edit's tier is the lowest among the
+symbols it touches.
+
+The counts are yours to change:
+
+```toml
+[characterize]
+baseline_runs = 3   # N — suite runs before any edit
+retries       = 2   # M — extra whole-suite runs before a failure is believed
+replays       = 3   # R — replays before a generated oracle is trusted
+```
+
+This costs real time: `N + 1 + R` suite runs before the first edit, with the
+traced run several times slower than a plain one. `total_seconds` in the same
+table bounds it, and a run that exhausts it keeps the baseline it already paid
+for and reports the rest as undone.
 
 Everything Polish writes lives in `.polish/`, which ignores itself via its own
 `.gitignore`; your `.gitignore` is never edited.
@@ -245,16 +314,23 @@ allowlist only.
 
 The allowlist constrains command *shapes*, not a list of program names: **your
 repository never supplies a program.** Everything Polish runs is the sandbox
-virtualenv's own interpreter in one of four forms —
+virtualenv's own interpreter in one of five forms —
 
 ```
 python -m pip install --only-binary :all: <requirement>...
 python -m pytest -q --tb=no -p no:cacheprovider
 python -c "import <module>"
 python -m <module>  |  <script>.py     # only if you asked for it, below
+python -P -c "<one of Polish's own harness programs>"
 ```
 
-— never through a shell, never with your environment inherited (the child gets a
+The fifth is Polish's own characterization harness, and its program text is a
+constant in Polish's source, compared for exact equality — not one character of
+it comes from your repository. `-P` is what makes that true: without it, `python
+-c` puts your repository's own directory first on `sys.path`, and a file of the
+right name sitting there would supply the program instead.
+
+Nothing here runs through a shell, never with your environment inherited (the child gets a
 built `PATH` and a throwaway `HOME`, so the API keys in your shell do not reach
 it), and never with options your `requirements.txt` chose. Every command a run
 issued is printed in its output, so this is something you can check rather than
@@ -273,8 +349,9 @@ Entry points are never run unless you name one yourself:
 entrypoint = "yourpkg.demo"   # a module, or "scripts/demo.py" — never a shell string
 ```
 
-The reasoning, and the two residual holes, are in
-[ADR 0006](docs/adr/0006-a-command-allowlist-of-fixed-shapes.md).
+The reasoning, and the residual holes, are in
+[ADR 0006](docs/adr/0006-a-command-allowlist-of-fixed-shapes.md) and
+[ADR 0007](docs/adr/0007-a-polish-authored-harness-inside-the-allowlist.md).
 
 This is deliberate, and it is the design's weakest guarantee. Docker would give
 real isolation but fails exactly where autonomous refactoring matters most —
@@ -289,6 +366,7 @@ is in [SPEC §3.3](docs/SPEC.md).
 polish/
 ├── src/polish/       # core library
 │   ├── cli.py        #   the polish command
+│   ├── characterize/ #   Tier 1's oracles, the flake gate and per-symbol coverage
 │   ├── envelope/     #   snapshot, sandbox and branch: the safety envelope
 │   ├── firstparty/   #   first-party source detection
 │   ├── observer/     #   the daytime daemon: code graph and change history

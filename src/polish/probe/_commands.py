@@ -7,12 +7,13 @@ the README said so. This module is it.
 
 The rule it enforces is narrow and mechanical: **the repository never supplies a
 program.** Every command is the sandbox virtualenv's own interpreter in one of
-four fixed shapes:
+five fixed shapes:
 
     <venv>/bin/python -m pip install --only-binary :all: <requirement>...
     <venv>/bin/python -m pytest -q --tb=no -p no:cacheprovider
     <venv>/bin/python -c "import <module>"
     <venv>/bin/python -m <module>          | <script>.py     (gate 4, opt-in)
+    <venv>/bin/python -P -c "<one of Polish's own harness programs>"
 
 A `Command` cannot be constructed outside those shapes — validation is in
 `__post_init__` rather than at dispatch, so an ill-formed command has no moment
@@ -32,6 +33,12 @@ What the allowlist does **not** contain is the honest part:
 * `--only-binary :all:` forbids building from source, so no third-party
   `setup.py` runs either. Repos that need a source build fail gate 1 and land
   Tier 0 — the acceptable error, not the dangerous one.
+
+The fifth shape arrived with #13 and is the one exception that proves the rule:
+its program text is a **constant in this file**, compared for exact equality by
+the validator, so the command provably carries no repository input at all. See
+`docs/adr/0007-a-polish-authored-harness-inside-the-allowlist.md`, which amends
+ADR 0006 rather than routing around it.
 """
 
 from __future__ import annotations
@@ -47,6 +54,27 @@ PIP_INSTALL = "pip-install"
 PYTEST = "pytest"
 IMPORT_SMOKE = "import-smoke"
 ENTRYPOINT = "entrypoint"
+HARNESS = "harness"
+
+#: The module Polish copies into a scratch directory of its own and puts first
+#: on `PYTHONPATH`. `-P` in the shape below is what makes the name unambiguous:
+#: without it the repository's own directory leads `sys.path` for `python -c`,
+#: and a repository file of this name would supply the program instead.
+HARNESS_MODULE = "_polish_harness"
+
+#: What Polish's harness is asked to do. The task is in the *program text* and
+#: not in an argument, so the run log distinguishes the three without the
+#: allowlist having to admit a single repository-influenced character.
+SUITE = "suite"
+TRACE = "trace"
+ORACLES = "oracles"
+
+#: The only three programs the fifth shape may carry. Compared for equality, so
+#: this dictionary is the entire vocabulary — nothing is assembled at runtime.
+HARNESS_PROGRAMS: Mapping[str, str] = {
+    task: f"import {HARNESS_MODULE} as _h; _h.{task}()"
+    for task in (SUITE, TRACE, ORACLES)
+}
 
 #: The fixed argument prefix each kind must begin with. The repository can
 #: influence what follows, never this.
@@ -55,6 +83,7 @@ SHAPES: Mapping[str, tuple[str, ...]] = {
     PYTEST: ("-m", "pytest", "-q", "--tb=no", "-p", "no:cacheprovider"),
     IMPORT_SMOKE: ("-c",),
     ENTRYPOINT: (),
+    HARNESS: ("-P", "-c"),
 }
 
 #: A dotted Python module path and nothing else. Anything a shell would find
@@ -195,6 +224,35 @@ def entrypoint(python: Path, target: str, timeout: float) -> Command:
     return Command(kind=ENTRYPOINT, python=python, arguments=arguments, timeout=timeout)
 
 
+def harness(python: Path, task: str, timeout: float) -> Command:
+    """Polish's own program, running one of three fixed tasks (#13).
+
+    The characterization harness needs two things the four original shapes
+    cannot express: per-test outcomes, which `pytest -q` does not print, and a
+    `sys.settrace` tracer, which no pytest command line can install. ADR 0007
+    admits it as a fifth shape rather than letting either need be met by
+    widening one of the four.
+
+    What keeps it inside the allowlist's rule is that the program is a constant
+    in this module, compared for equality below. There is nothing for a
+    repository to influence: parameters reach the harness through the
+    environment Polish builds, and `-P` keeps the repository's own directory off
+    `sys.path` so it cannot supply `_polish_harness` itself.
+    """
+    program = HARNESS_PROGRAMS.get(task)
+    if program is None:
+        raise NotAllowed(
+            f"{task!r} is not one of Polish's harness tasks "
+            f"({', '.join(sorted(HARNESS_PROGRAMS))})."
+        )
+    return Command(
+        kind=HARNESS,
+        python=python,
+        arguments=(*SHAPES[HARNESS], program),
+        timeout=timeout,
+    )
+
+
 @dataclass(frozen=True)
 class Subprocess:
     """The real runner. Pinned to a directory and a minimal environment.
@@ -234,13 +292,23 @@ class Subprocess:
         )
 
 
-def environment(python: Path, roots: Sequence[Path], home: Path) -> dict[str, str]:
+def environment(
+    python: Path,
+    roots: Sequence[Path],
+    home: Path,
+    extra: Mapping[str, str] | None = None,
+) -> dict[str, str]:
     """The child's whole environment, built rather than inherited.
 
     Inheriting `os.environ` would hand an untrusted repository's test suite
     every credential in the user's shell. Building it instead costs pip's cache
     (`HOME` points at a scratch directory that dies with the run) and buys a
     probe that can be pointed at a stranger's repo, which is the requirement.
+
+    `extra` is how the fifth shape's harness is parameterised (#13). It is
+    applied last and is *Polish-authored only* — the point of putting the
+    harness's parameters here rather than in `argv` is that the command stays a
+    constant, so anything a repository influenced would defeat the exercise.
     """
     built = {
         "PATH": os.pathsep.join([str(python.parent), "/usr/bin", "/bin"]),
@@ -259,6 +327,7 @@ def environment(python: Path, roots: Sequence[Path], home: Path) -> dict[str, st
     for name in PASSTHROUGH:
         if name in os.environ:
             built[name] = os.environ[name]
+    built.update(extra or {})
     return built
 
 
@@ -305,6 +374,16 @@ def _validate_tail(command: Command, tail: tuple[str, ...]) -> None:
             )
     elif command.kind == ENTRYPOINT:
         _validate_entrypoint(tail)
+    elif command.kind == HARNESS:
+        # Equality against a constant, not a pattern over one. A shape whose
+        # tail is checked for *structure* can always be argued into admitting
+        # one more thing; a shape whose tail must equal a string in this file
+        # cannot, and that is the whole reason ADR 0007 was allowed to exist.
+        if len(tail) != 1 or tail[0] not in set(HARNESS_PROGRAMS.values()):
+            raise NotAllowed(
+                "the harness shape carries one of Polish's own programs and "
+                f"nothing else; got {list(tail)}."
+            )
 
 
 def _validate_entrypoint(tail: tuple[str, ...]) -> None:

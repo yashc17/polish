@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import os
 import subprocess
+import venv
 from collections.abc import Callable, Mapping
 from pathlib import Path
 
@@ -95,3 +96,23 @@ def make_git_repo(make_repo) -> Callable[[Mapping[str, str]], Path]:
         return commit_repo(make_repo(files))
 
     return _make
+
+
+@pytest.fixture(scope="session")
+def sandbox_venv(tmp_path_factory) -> Path:
+    """One real virtualenv, shared. Building one costs seconds; sharing is safe.
+
+    `system_site_packages` is what keeps the suite offline: whatever runs in it
+    finds pytest already importable and never reaches for the network. It is a
+    test fixture rather than something the envelope does —
+    `_sandbox._build_venv` deliberately builds an isolated one.
+
+    Shared by the probe (#12) and the characterization harness (#13), which both
+    execute repositories for real. Two session virtualenvs would be two builds
+    and a second thing to keep offline.
+    """
+    path = tmp_path_factory.mktemp("sandbox") / "venv"
+    venv.EnvBuilder(
+        with_pip=True, symlinks=os.name != "nt", system_site_packages=True
+    ).create(path)
+    return path
