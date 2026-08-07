@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import os
 import subprocess
+import venv
 from collections.abc import Callable, Mapping
 from pathlib import Path
 
@@ -95,3 +96,49 @@ def make_git_repo(make_repo) -> Callable[[Mapping[str, str]], Path]:
         return commit_repo(make_repo(files))
 
     return _make
+
+
+@pytest.fixture(scope="session")
+def sandbox_venv(tmp_path_factory) -> Path:
+    """One real virtualenv, shared. Building one costs seconds; sharing is safe.
+
+    Shared by the probe (#12) and the characterization harness (#13), which both
+    execute repositories for real. Two session virtualenvs would be two builds
+    and a second thing to keep offline.
+
+    Offline is the property being bought here, and `system_site_packages` alone
+    does not buy it: a virtualenv built from inside a virtualenv reaches the
+    *base* interpreter's packages, not the one the suite is running in. Under a
+    `uv`-managed interpreter that base has nothing in it, so the probe would
+    silently fall back to installing pytest over the network — and the harness,
+    which has no such fallback, would simply find no pytest at all. Reaching for
+    the running interpreter's own `pytest` makes the suite behave the same way
+    on 3.11, 3.12 and 3.13 and on a machine with no network.
+    """
+    path = tmp_path_factory.mktemp("sandbox") / "venv"
+    venv.EnvBuilder(
+        with_pip=True, symlinks=os.name != "nt", system_site_packages=True
+    ).create(path)
+    _reach_installed_pytest(path)
+    return path
+
+
+def _reach_installed_pytest(sandbox: Path) -> None:
+    """Put the running interpreter's `pytest` on the sandbox's import path.
+
+    A `.pth` rather than an install, because an install needs a network. Note
+    this also makes `polish` itself importable in the sandbox, which a real one
+    never is — `test_the_harness_imports_nothing_from_polish` pins the property
+    that would otherwise mask, rather than leaving it to the environment.
+    """
+    packages = Path(pytest.__file__).parent.parent
+    for candidate in (*sandbox.glob("lib/python*/site-packages"), sandbox / "Lib"):
+        target = (
+            candidate
+            if candidate.name == "site-packages"
+            else candidate / "site-packages"
+        )
+        if target.is_dir():
+            (target / "_polish_test_pytest.pth").write_text(f"{packages}\n")
+            return
+    raise AssertionError(f"no site-packages inside {sandbox}")

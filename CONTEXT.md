@@ -90,11 +90,19 @@ that must never happen: it attaches a verification claim to execution that never
 occurred. **False Tier 0** is a lost night and is acceptable. Same asymmetry as
 precision over recall in detection, applied one layer up.
 
-**Command allowlist** — the four fixed command shapes the probe may execute,
-always the sandbox interpreter, never a program the repository supplied. Its
-claim is narrower than "sandboxed": Polish never becomes a way for a repository
-to choose what runs. See
-[ADR 0006](docs/adr/0006-a-command-allowlist-of-fixed-shapes.md) and SPEC §3.3.
+**Command allowlist** — the five fixed command shapes Polish may execute, always
+the sandbox interpreter, never a program the repository supplied. Its claim is
+narrower than "sandboxed": Polish never becomes a way for a repository to choose
+what runs. See [ADR 0006](docs/adr/0006-a-command-allowlist-of-fixed-shapes.md)
+and SPEC §3.3.
+
+**Harness** — the fifth shape, and Polish's own program running inside the
+sandbox: `python -P -c "<a constant in polish's source>"`, doing one of three
+tasks (*suite*, *trace*, *oracles*). Its parameters travel in the environment
+because the command must stay a constant, and `-P` is what stops the repository
+supplying the module. See
+[ADR 0007](docs/adr/0007-a-polish-authored-harness-inside-the-allowlist.md). Say
+*harness* for Polish's program and *suite* for the repository's tests.
 
 **Corpus** — the hand-labelled real repositories the product claims are measured
 against. Two of them now: `tests/corpus/` for detection precision and recall,
@@ -202,14 +210,68 @@ claimed and changed nothing else. `polish.tier0.prove()`, checkable on its own.
 Comments and layout may move; import order may not, because import order is
 behaviour.
 
-**Baseline** — the diagnostics the type checker reported *before* any edit. The
-gate is that a change introduces none that were not already there — Tier 0's
-target repository does not type check clean, so an absolute bar would never
-pass. See [ADR 0004](docs/adr/0004-mypy-as-the-tier-0-type-check.md).
+**Baseline** *(Tier 0)* — the diagnostics the type checker reported *before* any
+edit. The gate is that a change introduces none that were not already there —
+Tier 0's target repository does not type check clean, so an absolute bar would
+never pass. See [ADR 0004](docs/adr/0004-mypy-as-the-tier-0-type-check.md).
+Tier 1 has a baseline of its own, below; say which when both are in scope.
 
 **Unverifiable** — the state where verification could not run at all. Not a
 verdict, and never read as one: the run ships nothing and says so.
 
-Terms from `docs/SPEC.md` not yet exercised by code — *characterization*,
-*Agent SDK edits*, *verifier*, *reporter*, *change queue*, *repair attempt* —
-are defined there and move here as they get built.
+**Characterization** — what Tier 1 knows about a repository before any edit: the
+suite's flake baseline, the generated oracles that survived replay, and the
+per-symbol coverage. Produced by `polish.characterize.characterize()` inside the
+sandbox. Say *characterization* for the whole record and *oracle* for one test
+in it.
+
+**Oracle** — one generated test asserting that a recorded call still returns
+what it was observed returning. Written as a `repr` comparison, not `==`, so
+that dict and set ordering is a determinism signal rather than something a
+tolerant equality forgives. Polish owns its oracles — which is why they are
+*discarded*, never quarantined.
+
+**Recordable** — a call whose arguments and return value can be written back out
+as source that reconstructs them. The Tier 1 counterpart of *provably inert*: an
+oracle that cannot rebuild its own inputs is not an oracle. Methods are excluded
+by it for free, because `self` is not a literal.
+
+**Baseline** *(characterization)* — the repository's own suite, run **N=3** times
+before any edit exists to bias it. Authoritative because it is the only thing
+that can tell a pre-existing flake from one Polish caused. Distinct from Tier 0's
+type-check baseline; say which when both are in scope.
+
+**Quarantined** — a test whose result was not identical across the baseline's N
+runs. Excluded from the night's verification, **named in the run log**, and
+never able to drop a change. Applied to the *user's* tests, because you cannot
+delete someone else's test.
+
+**Discarded** — a generated oracle that did not pass identically across all
+**R=3** replays against unmodified code. Deleted, not quarantined. The asymmetry
+with *quarantined* is the point: a flaky user test drops good work, a flaky
+oracle can pass a broken change.
+
+**Replay** — running a generated oracle against unmodified code to find out
+whether it may be believed. *Replay before trust*: nothing is emitted that has
+not survived R of them.
+
+**Retry** — the M=2 backstop during the run: a regression is re-checked over M
+more **whole-suite** runs before it is believed. Whole-suite because a test id is
+repository-authored text, and the allowlist keeps such text out of every command
+line.
+
+**Regression** — a trusted test that got worse than the baseline recorded, or
+stopped being collected at all. Not "a test that failed": gate 2 promotes
+repositories whose suites already have failures, so holding every test to green
+would blame Polish for a repository that was already red.
+
+**Coverage tier** — a symbol's tier: **Tier 1 only with a surviving oracle**.
+Executed is not enough — code with no oracle falls back to Tier 0, or SPEC §3.9's
+commit message would claim "verified against recorded behaviour" for a change
+whose oracle was thrown away. An edit's tier is the lowest among the symbols it
+touches ([question #4](https://github.com/yashc17/polish/issues/14)), looked up
+through `Coverage.tier_for`.
+
+Terms from `docs/SPEC.md` not yet exercised by code — *Agent SDK edits*,
+*verifier*, *reporter*, *change queue*, *repair attempt* — are defined there and
+move here as they get built.

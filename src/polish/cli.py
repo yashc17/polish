@@ -87,11 +87,15 @@ def build_parser() -> argparse.ArgumentParser:
             "byte-identical. The first run sweeps the whole repository; every "
             "run after it looks at the files that changed since the last one "
             "plus their dependency closure, and says so. The tier verdict and "
-            "every command the probe ran "
-            "are printed with the run. This release removes unused imports at "
+            "every command Polish ran are printed with the run. This release "
+            "removes unused imports at "
             "Tier 0: every change is proven behaviour-preserving by "
             "AST-equivalence and a type check before it is committed, and one "
-            "that fails either is reverted and reported rather than shipped."
+            "that fails either is reverted and reported rather than shipped. "
+            "On a Tier 1 repository the run also characterizes the code before "
+            "editing it: the suite is run several times to find flaky tests, "
+            "which are quarantined and named in the output, and behaviour is "
+            "traced to generate oracles for the changes to come."
         ),
     )
     run_command.add_argument(

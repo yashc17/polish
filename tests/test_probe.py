@@ -12,15 +12,13 @@ So this file owns the claims that are about execution actually happening:
 timeouts that really expire, an environment the child really cannot see out of,
 and an allowlist that really refuses.
 
-Offline by construction. The sandbox virtualenv is built with system site
-packages so that pytest is reachable without a download, and no test declares a
-dependency that is not already installed or already invalid.
+Offline by construction. The `sandbox_venv` fixture in `conftest` is built with
+system site packages so that pytest is reachable without a download, and no test
+declares a dependency that is not already installed or already invalid.
 """
 
 from __future__ import annotations
 
-import os
-import venv
 from pathlib import Path
 
 import pytest
@@ -28,6 +26,7 @@ import pytest
 from polish.probe import (
     ENTRYPOINT,
     FAIL,
+    HARNESS,
     IMPORT_SMOKE,
     PASS,
     PIP_INSTALL,
@@ -38,6 +37,7 @@ from polish.probe import (
     Completed,
     NotAllowed,
     Tier,
+    harness,
     probe,
 )
 
@@ -55,22 +55,6 @@ PASSING_SUITE = {
         "from mypkg.core import add\n\n\ndef test_add():\n    assert add(1, 2) == 3\n"
     )
 }
-
-
-@pytest.fixture(scope="session")
-def sandbox_venv(tmp_path_factory) -> Path:
-    """One real virtualenv, shared. Building one costs seconds; sharing is safe.
-
-    `system_site_packages` is what keeps the suite offline: the probe finds
-    pytest already importable and never reaches for the network. It is a test
-    fixture rather than something the envelope does — `_sandbox._build_venv`
-    deliberately builds an isolated one.
-    """
-    path = tmp_path_factory.mktemp("sandbox") / "venv"
-    venv.EnvBuilder(
-        with_pip=True, symlinks=os.name != "nt", system_site_packages=True
-    ).create(path)
-    return path
 
 
 @pytest.fixture
@@ -464,9 +448,19 @@ def test_the_repository_does_not_inherit_the_users_environment(probe_repo, monke
         (ENTRYPOINT, ("bash", "-c", "id")),
         (ENTRYPOINT, ("/etc/passwd.py",)),
         ("git-clone", ("clone", "http://evil.example")),
+        # The fifth shape (ADR 0007). Its whole claim is that the program is a
+        # constant in `_commands`, so the interesting refusals are the ones that
+        # look almost right: a different program, an extra argument, or the
+        # correct program without `-P` — which would put the repository's own
+        # directory ahead of Polish's on `sys.path` and let it supply
+        # `_polish_harness` itself.
+        (HARNESS, ("-P", "-c", "import _polish_harness as _h; _h.evil()")),
+        (HARNESS, ("-P", "-c", "import _polish_harness")),
+        (HARNESS, ("-P", "-c", "import _polish_harness as _h; _h.suite()", "--x")),
+        (HARNESS, ("-c", "import _polish_harness as _h; _h.suite()")),
     ],
 )
-def test_the_allowlist_refuses_anything_outside_its_four_shapes(kind, arguments):
+def test_the_allowlist_refuses_anything_outside_its_five_shapes(kind, arguments):
     """A `Command` cannot exist outside the allowlist, so nothing can dispatch one.
 
     Validated at construction rather than at dispatch: the dispatch check is the
@@ -477,6 +471,22 @@ def test_the_allowlist_refuses_anything_outside_its_four_shapes(kind, arguments)
         Command(
             kind=kind, python=Path("/venv/bin/python"), arguments=arguments, timeout=1.0
         )
+
+
+def test_the_harness_runs_only_the_tasks_polish_wrote(sandbox_venv):
+    """The fifth shape carries a Polish constant, and there is no fourth task.
+
+    ADR 0007's argument for admitting the shape at all is that a repository
+    cannot influence a single character of it. That argument survives exactly as
+    long as the task name is looked up in a table rather than interpolated into
+    a string, which is what this pins.
+    """
+    python = sandbox_venv / "bin" / "python"
+    assert harness(python, "suite", 1.0).display() == (
+        "python -P -c import _polish_harness as _h; _h.suite()"
+    )
+    with pytest.raises(NotAllowed):
+        harness(python, "suite(); __import__('os').system('id')", 1.0)
 
 
 def test_every_command_is_the_sandbox_interpreter(make_repo, sandbox_venv):
