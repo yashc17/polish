@@ -1,4 +1,4 @@
-# ADR 0004 — A command allowlist of fixed shapes, not of programs
+# ADR 0006 — A command allowlist of fixed shapes, not of programs
 
 **Status:** Accepted · 2026-08-07
 **Context:** [#12](https://github.com/yashc17/polish/issues/12), implementing

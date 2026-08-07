@@ -90,7 +90,7 @@ precision over recall in detection, applied one layer up.
 always the sandbox interpreter, never a program the repository supplied. Its
 claim is narrower than "sandboxed": Polish never becomes a way for a repository
 to choose what runs. See
-[ADR 0004](docs/adr/0004-a-command-allowlist-of-fixed-shapes.md) and SPEC §3.3.
+[ADR 0006](docs/adr/0006-a-command-allowlist-of-fixed-shapes.md) and SPEC §3.3.
 
 **Corpus** — the hand-labelled real repositories the product claims are measured
 against. Two of them now: `tests/corpus/` for detection precision and recall,

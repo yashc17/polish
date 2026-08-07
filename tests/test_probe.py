@@ -244,7 +244,7 @@ def test_pip_never_receives_options_out_of_a_requirements_file(probe_repo):
     assert all(" -e ." not in command for command in installs)
     assert "pathspec" in installs[0]
     # No source distribution is built, so gate 1's claim to execute no
-    # repository code holds for third-party `setup.py` too (ADR 0004).
+    # repository code holds for third-party `setup.py` too (ADR 0006).
     assert all("--only-binary :all:" in command for command in installs)
 
 
@@ -471,7 +471,7 @@ def test_the_allowlist_refuses_anything_outside_its_four_shapes(kind, arguments)
 
     Validated at construction rather than at dispatch: the dispatch check is the
     one a refactor deletes by accident, and substituting a runner must not be
-    able to widen what is legal (ADR 0004).
+    able to widen what is legal (ADR 0006).
     """
     with pytest.raises(NotAllowed):
         Command(

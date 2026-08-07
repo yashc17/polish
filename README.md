@@ -212,7 +212,7 @@ entrypoint = "yourpkg.demo"   # a module, or "scripts/demo.py" — never a shell
 ```
 
 The reasoning, and the two residual holes, are in
-[ADR 0004](docs/adr/0004-a-command-allowlist-of-fixed-shapes.md).
+[ADR 0006](docs/adr/0006-a-command-allowlist-of-fixed-shapes.md).
 
 This is deliberate, and it is the design's weakest guarantee. Docker would give
 real isolation but fails exactly where autonomous refactoring matters most —
