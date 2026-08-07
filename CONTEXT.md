@@ -58,12 +58,12 @@ repository, and therefore which engine and which claim it has earned. Run by
 `polish.probe.probe()` inside the sandbox, never against the working tree. Say
 *probe* for the act and *verdict* for what it produces.
 
-**Tier 0 / Tier 1** — what the verdict is. Tier 0 verifies by AST-equivalence
-plus a type check and claims "provably behaviour-preserving". Tier 1 verifies
-against characterization tests from real execution and claims "verified against
-recorded behaviour" (SPEC §3.1). Per **repository**, not per file, for v1 —
-granularity is open question #4 and needs coverage data from #13. Never say "the
-repo is Tier 1" about anything the probe has not promoted.
+**Tier 1** — the tier for a repository Polish *can* execute. Verification is
+characterization tests from real execution traces and the claim is **verified
+against recorded behaviour** (SPEC §3.1); *Tier 0* below is its counterpart.
+The verdict is per **repository**, not per file, for v1 — granularity is open
+question #4 and needs coverage data from #13. Never say "the repo is Tier 1"
+about anything the probe has not promoted.
 
 **Gate** — one hard filter in the probe, evaluated in order: *venv*, *suite*,
 *imports*, *entrypoint*. Hard, not scored: a gate cannot contribute partial
@@ -141,6 +141,39 @@ existence is why a stale graph is never a correctness problem, only a cost.
 `meta.json` and `daemon.pid`. Say *store* for the observer's state and
 *workspace* for `.polish/` as a whole, which also holds snapshots and sandboxes.
 
+**Tier 0** — the tier for a repository Polish cannot execute. Verification is
+AST-equivalence plus a type check, the edits are deterministic codemods, and the
+claim is **provably behaviour-preserving**. Implemented in `polish.tier0`. Say
+*Tier 0*, not "the safe tier" — Tier 1 is not less safe, it verifies differently.
+
+**Change** — one file's worth of refactoring, decided as a unit: applied,
+verified, then either committed on its own or reverted. Never spans two files,
+which is what makes dropping any single commit safe. A dropped change is still a
+change, and still appears in the run log.
+
+**Provably inert** — a module that can be imported without running anything: the
+standard library minus a denylist, or a first-party module whose top level is
+only definitions and literals. The bar an unused import must clear before Tier 0
+will remove it, because importing a module runs it. See
+[ADR 0005](docs/adr/0005-tier-0-removes-only-provably-inert-imports.md).
+
+**Left alone** — an unused import Tier 0 declined to remove, carried into the
+commit message with its reason. Distinct from "not found": the reason is the
+product, in the same way the precision floor is.
+
+**AST-equivalence** — the proof that an edit removed exactly the bindings it
+claimed and changed nothing else. `polish.tier0.prove()`, checkable on its own.
+Comments and layout may move; import order may not, because import order is
+behaviour.
+
+**Baseline** — the diagnostics the type checker reported *before* any edit. The
+gate is that a change introduces none that were not already there — Tier 0's
+target repository does not type check clean, so an absolute bar would never
+pass. See [ADR 0004](docs/adr/0004-mypy-as-the-tier-0-type-check.md).
+
+**Unverifiable** — the state where verification could not run at all. Not a
+verdict, and never read as one: the run ships nothing and says so.
+
 Terms from `docs/SPEC.md` not yet exercised by code — *characterization*,
-*refactor engine*, *verifier*, *reporter*, *change queue*, *repair attempt* —
+*Agent SDK edits*, *verifier*, *reporter*, *change queue*, *repair attempt* —
 are defined there and move here as they get built.

@@ -127,10 +127,24 @@ def test_git_reports_the_repository_exactly_as_it_was(completed_run):
 
 
 def test_the_output_branch_is_created_at_head(completed_run):
+    """The branch starts at HEAD and only ever grows from there.
+
+    It no longer *equals* HEAD: the run commits the day's mirrored work before
+    doing anything else (see `test_run_changes.py`). What must stay true is
+    that HEAD is where the branch was cut, so the whole of it reviews as a
+    diff against the commit the developer left behind.
+    """
     root, record = completed_run.root, completed_run.record
 
     assert record.branch == f"polish/{date.today().isoformat()}"
-    assert git(root, "rev-parse", record.branch) == git(root, "rev-parse", "HEAD")
+    subprocess.run(
+        ("git", "merge-base", "--is-ancestor", "HEAD", record.branch),
+        cwd=root,
+        check=True,
+    )
+    assert git(root, "log", "-1", "--format=%s", record.branch) == (
+        "chore(polish): the working tree as Polish found it\n"
+    )
 
 
 def test_the_sandbox_is_a_worktree_carrying_the_uncommitted_work(completed_run):

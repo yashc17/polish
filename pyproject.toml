@@ -13,6 +13,11 @@ authors = [{ name = "Yash Chanchani" }]
 dependencies = [
     # gitignore matching, wildmatch-compatible with git's own semantics
     "pathspec>=1.0",
+    # Tier 0's codemods: edits that come back with comments and layout intact
+    "libcst>=1.4",
+    # Tier 0's type check, and the gate that catches cross-file breakage.
+    # See docs/adr/0004-mypy-as-the-tier-0-type-check.md.
+    "mypy>=1.11",
 ]
 
 [project.scripts]

@@ -85,8 +85,10 @@ def build_parser() -> argparse.ArgumentParser:
             "worktree with its own virtualenv, probes whether the repository "
             "can be executed, does its work there, and leaves the working tree "
             "byte-identical. The tier verdict and every command the probe ran "
-            "are printed with the run. This release makes no edits: the safety "
-            "envelope is the payload."
+            "are printed with the run. This release removes unused imports at "
+            "Tier 0: every change is proven behaviour-preserving by "
+            "AST-equivalence and a type check before it is committed, and one "
+            "that fails either is reverted and reported rather than shipped."
         ),
     )
     run_command.add_argument(
