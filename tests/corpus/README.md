@@ -1,9 +1,25 @@
+# The corpora
+
+Real repositories, hand-labelled, used to measure the two claims Polish makes
+about repositories it has never seen. There are two corpora here:
+
+| | Measures | Floor | Enforced by |
+|---|---|---|---|
+| `*.json` | `firstparty.scan()` precision and recall | precision 1.00, recall ≥ 0.95 | `test_corpus.py` |
+| `probe/*.json` | `probe.probe()` tier accuracy | **zero false Tier 1** | `test_probe_corpus.py` |
+
+`python scripts/corpus_report.py` prints both on demand. The floors are the same
+product decision applied one layer apart: a file wrongly called first-party and a
+repository wrongly promoted to Tier 1 both mean Polish acting confidently on
+something it cannot account for.
+
+---
+
 # The first-party detection corpus
 
 Real repositories, hand-labelled, used to measure precision and recall of
 `polish.firstparty.scan()`. `tests/test_corpus.py` fails the build if either
-metric drops below its floor; `python scripts/corpus_report.py` prints the same
-numbers on demand.
+metric drops below its floor.
 
 ## What a manifest is
 
@@ -78,3 +94,109 @@ them alone would give the same corpus score, so **the corpus cannot show that
 each layer works** — only that the combination does. Per-layer behaviour is
 pinned by `tests/test_scan.py`, where each case is built so exactly one signal
 fires.
+
+---
+
+# The tier-probe corpus
+
+`probe/*.json`. Same discipline, different measurement: does the probe put a
+repository it has never seen in the right tier?
+
+## What a probe manifest is
+
+The repository's **shape** — either its own `files` block, or a `shape` naming a
+detection manifest to reuse, so `requests` has one tree in this repository rather
+than two that can drift — plus a **recording** of what the probe's commands
+really did on a real machine:
+
+```json
+{
+  "name": "flask",
+  "shape": "flask",
+  "captured_on": "darwin python3.13.1",
+  "note": "why this repo is in the corpus",
+  "label_rule": { "reason": "why the label is what it is", "expected_tier": 1 },
+  "recorded": {
+    "install":  { "code": 0, "timed_out": false, "output": "…" },
+    "pytest":   { "code": 0, "timed_out": false, "output": "… 485 passed in 12.4s" },
+    "pytest_available": true,
+    "entrypoint": null,
+    "unimportable": ["conf", "make_celery", "task_app"],
+    "imported": 34
+  },
+  "observed_at_capture": { "tier": 0, "reason": "…", "gates": ["…"] }
+}
+```
+
+The recording is keyed by what a command *means*, not by its `argv`. Gate 3
+batches its imports, so raw `argv` keys would depend on `_gates.BATCH` and on
+module ordering — change either and the whole corpus becomes cache misses that
+quietly default to something. Per-module outcomes are lossless instead, because a
+batch that passed settles every member and a batch that failed is re-run member
+by member anyway.
+
+A command with no recording **raises** rather than defaulting. An invented
+outcome that happens to be a success is a fabricated Tier 1.
+
+## Labels are still not recordings
+
+`expected_tier` is stated by a human who read the repository, with a prose reason
+beside it — the same rule as `not_first_party` above. `observed_at_capture` is
+what the probe said at capture time and is **not** a label: a manifest whose
+observed tier differs from its label is either a bug or a deliberately hard case,
+and a reviewer should be able to tell which without running anything.
+
+## What each repo is here for
+
+| Repo | The case it covers | Label |
+|---|---|---|
+| `requests` | Baseline healthy repository: a green, self-contained suite needing no keys, no GPU, no services. | 1 |
+| `flask` | Second healthy repository, and the corpus's **designed disagreement** — see below. | 1 |
+| `instructor` | Needs API keys. Suite marked `integration: may require API keys`, `conftest.py` calls `load_dotenv()`, thirteen modules read `OPENAI_API_KEY`/`ANTHROPIC_API_KEY`. Deps install; the suite collapses with eleven collection errors and zero passes. | 0 |
+| `flash-attention` | Needs a GPU, **and has a suite** — so "cannot execute" is measured separately from "has nothing to execute". Fifty-one collection errors on a machine with no CUDA. | 0 |
+| `nanogpt` | No test suite at all, and needs a GPU. The research-repo shape SPEC §1 says needs Polish most. | 0 |
+
+## The flask row is meant to disagree
+
+`flask` is labelled Tier 1 and the probe says Tier 0, and that is on purpose.
+Its suite passes 485 tests and every `flask.*` module imports — the code Polish
+would actually refactor is characterizable. But its first-party set also holds
+the example apps under `examples/celery/` and `docs/conf.py`, which need celery
+and sphinx, and v1's verdict is **per repository**, so gate 3 demotes the whole
+thing for eight unimportable modules.
+
+That gap is evidence bearing on [open question #4](../../docs/SPEC.md) (per-file
+tiering), which is evidence-blocked on purpose. Relabelling it to match the code
+would delete the evidence. A false Tier 0 has no ceiling precisely so a row like
+this can sit in the corpus and be argued about with data.
+
+## Adding a repo
+
+```bash
+git clone --depth 1 https://github.com/owner/name /tmp/name
+python scripts/capture_probe_corpus.py /tmp/name \
+    --name name --source https://github.com/owner/name \
+    --out tests/corpus/probe/name.json \
+    --expected-tier 0 \
+    --note   "what makes this repo worth having" \
+    --reason "why a human says this tier"
+```
+
+It builds a real virtualenv and really probes the tree, so it needs the network
+and takes minutes. Add `--shape <name>` to reuse an existing detection manifest's
+tree instead of capturing a second copy.
+
+## The caveat that matters most
+
+**A recording is one machine, one date, one Python.** `pip install flash-attn`
+failing is a fact about a laptop with no NVIDIA GPU as much as about the
+repository, and a CI runner with CUDA would record something else. That is the
+price of having a repository which needs a GPU inside an offline test suite, and
+it is worth paying — but it means the corpus proves the **gate logic**, not the
+execution.
+
+A runner mutated into a no-op would replay identically and every verdict would
+survive. So the claims that are about execution actually happening —
+timeouts that really expire, an environment the child really cannot see out of,
+an allowlist that really refuses — live in `tests/test_probe.py`, against
+repositories built on disk and really run. Neither file is sufficient alone.

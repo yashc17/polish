@@ -4,11 +4,12 @@
 
 The envelope is the product (SPEC §1.1): a change Polish cannot verify is a
 change Polish does not make, and the apparatus around the edit is what earns
-the right to be left unattended. This module is that apparatus with nothing
-inside it yet — it takes the snapshot, builds the sandbox, opens the branch,
-makes no edits, and leaves the working tree exactly as it found it. Two of the
-v1 acceptance criteria (§4.2, §4.9) are about the envelope rather than the
-refactoring, and both are provable here, before an edit engine exists.
+the right to be left unattended. This module is that apparatus: it takes the
+snapshot, builds the sandbox, opens the branch, asks the tier probe which
+engine the repository has earned, makes no edits, and leaves the working tree
+exactly as it found it. Three of the v1 acceptance criteria (§4.2, §4.3, §4.9)
+are about the envelope rather than the refactoring, and all three are provable
+here, before an edit engine exists.
 """
 
 from __future__ import annotations
@@ -20,6 +21,7 @@ from itertools import count
 from pathlib import Path
 
 from polish.firstparty import FirstPartySet, scan
+from polish.probe import Budget, TierVerdict, probe
 
 from . import _git, _sandbox, _snapshot
 
@@ -59,6 +61,10 @@ class RunRecord:
     #: The changes the run shipped. Empty by construction until the refactor
     #: engine exists (SPEC §3.11) — this release's payload is the envelope.
     changes: tuple[str, ...] = ()
+    #: What the tier probe decided, and the evidence for it. Optional only so
+    #: that a `RunRecord` can be built in tests without one; every real run has
+    #: a verdict, because the tier chooses the engine (SPEC §2, step 3).
+    tier: TierVerdict | None = None
 
     def summary(self) -> tuple[str, ...]:
         """The run, one fact per line — greppable from an overnight log."""
@@ -77,6 +83,15 @@ class RunRecord:
         lines += [
             _line("sandbox", f"{self._relative(sandbox)} ({state})"),
             _line("branch", self.branch),
+        ]
+        # The probe's own evidence, verbatim. Issue #12 requires the verdict to
+        # reach the run log with what produced it, including every command that
+        # was executed: a user whose repository landed Tier 0 is owed the
+        # reason, and a claim about a command allowlist that a user cannot check
+        # is a claim they have to take on faith.
+        if self.tier is not None:
+            lines += self.tier.summary()
+        lines += [
             _line(
                 "changes",
                 f"{len(self.changes)} (this release ships the safety envelope only)",
@@ -88,8 +103,19 @@ class RunRecord:
         return path.relative_to(self.root).as_posix()
 
 
-def run(root: Path, *, init_git: bool = False, keep_sandbox: bool = False) -> RunRecord:
-    """Perform a night-shift run against the repository at `root`."""
+def run(
+    root: Path,
+    *,
+    init_git: bool = False,
+    keep_sandbox: bool = False,
+    budget: Budget | None = None,
+) -> RunRecord:
+    """Perform a night-shift run against the repository at `root`.
+
+    `budget` bounds the tier probe. Injectable for the same reason the observer's
+    bounds are: a limit with no way to reach it in a test is a limit nobody has
+    ever seen work.
+    """
     root = Path(root)
     if not root.is_dir():
         raise EnvelopeError(f"{root} does not exist, or is not a directory.")
@@ -99,7 +125,13 @@ def run(root: Path, *, init_git: bool = False, keep_sandbox: bool = False) -> Ru
     # `--init-git`: a run that was going to decline should leave no trace at all.
     first_party = scan(root)
     try:
-        return _perform(root, first_party, init_git=init_git, keep_sandbox=keep_sandbox)
+        return _perform(
+            root,
+            first_party,
+            init_git=init_git,
+            keep_sandbox=keep_sandbox,
+            budget=budget,
+        )
     except _git.GitError as failure:
         # Git's own failures reach the user as refusals rather than tracebacks.
         # An unconfigured identity or a signing key wanting a passphrase is a
@@ -108,7 +140,12 @@ def run(root: Path, *, init_git: bool = False, keep_sandbox: bool = False) -> Ru
 
 
 def _perform(
-    root: Path, first_party: FirstPartySet, *, init_git: bool, keep_sandbox: bool
+    root: Path,
+    first_party: FirstPartySet,
+    *,
+    init_git: bool,
+    keep_sandbox: bool,
+    budget: Budget | None = None,
 ) -> RunRecord:
     _require_repository(root, init_git=init_git)
 
@@ -125,6 +162,20 @@ def _perform(
         worktree=run_dir / "worktree",
         environment=run_dir / "venv",
         branch=f"{BRANCH_PREFIX}{run_id}",
+    )
+
+    # Step 3 of SPEC §2's pipeline, and the first thing that happens inside the
+    # sandbox. The tier chooses the engine for everything after it, so it is
+    # decided before any edit is planned rather than discovered during one.
+    #
+    # It runs against `sandbox.worktree`, never `root`: the probe installs
+    # packages and executes the repository's own test suite, which is not
+    # something to do to a working tree Polish has promised not to touch (§4.9).
+    verdict = probe(
+        sandbox.worktree,
+        venv=sandbox.venv,
+        first_party=first_party.files,
+        budget=budget,
     )
 
     # The payload. Deliberately empty: the envelope is what this release ships,
@@ -146,6 +197,7 @@ def _perform(
         files=first_party.files,
         mirrored=sandbox.mirrored,
         sandbox_kept=keep_sandbox,
+        tier=verdict,
     )
 
 

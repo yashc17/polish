@@ -53,12 +53,59 @@ never edits the user's.
 the sandbox, which is otherwise checked out from `HEAD`. Without it a run would
 refactor the last commit rather than the day that just happened.
 
-**Corpus** — the hand-labelled real repositories in `tests/corpus/` that
-precision and recall are measured against. See `tests/corpus/README.md`.
+**Tier probe** — the component that decides whether Polish can *execute* a
+repository, and therefore which engine and which claim it has earned. Run by
+`polish.probe.probe()` inside the sandbox, never against the working tree. Say
+*probe* for the act and *verdict* for what it produces.
+
+**Tier 0 / Tier 1** — what the verdict is. Tier 0 verifies by AST-equivalence
+plus a type check and claims "provably behaviour-preserving". Tier 1 verifies
+against characterization tests from real execution and claims "verified against
+recorded behaviour" (SPEC §3.1). Per **repository**, not per file, for v1 —
+granularity is open question #4 and needs coverage data from #13. Never say "the
+repo is Tier 1" about anything the probe has not promoted.
+
+**Gate** — one hard filter in the probe, evaluated in order: *venv*, *suite*,
+*imports*, *entrypoint*. Hard, not scored: a gate cannot contribute partial
+credit, so no repository can average its way into Tier 1. Say *gate*, not
+"check" or "heuristic" — what it does is refuse.
+
+**Execution source** — a suite (gate 2) or an opted-in entry point (gate 4).
+**Tier 1 requires one.** Gate 3 is *demote-only*: a clean import smoke takes
+nothing away and grants nothing, because importing a module traces definitions
+and never enters a function body. Promoting on it would produce the vacuous test
+SPEC §3.1 calls *actively corrosive*. This is the single most load-bearing rule
+in the probe.
+
+**Downward resolution** — the rule that ambiguity, timeout, error, exhausted
+budget and refused command all resolve to Tier 0. Nothing in the probe resolves
+upward on anything but a repository actually executing.
+
+**False Tier 1** — a repository promoted that should not have been. The error
+that must never happen: it attaches a verification claim to execution that never
+occurred. **False Tier 0** is a lost night and is acceptable. Same asymmetry as
+precision over recall in detection, applied one layer up.
+
+**Command allowlist** — the four fixed command shapes the probe may execute,
+always the sandbox interpreter, never a program the repository supplied. Its
+claim is narrower than "sandboxed": Polish never becomes a way for a repository
+to choose what runs. See
+[ADR 0004](docs/adr/0004-a-command-allowlist-of-fixed-shapes.md) and SPEC §3.3.
+
+**Corpus** — the hand-labelled real repositories the product claims are measured
+against. Two of them now: `tests/corpus/` for detection precision and recall,
+and `tests/corpus/probe/` for tier accuracy. See `tests/corpus/README.md`.
 
 **Precision / recall floor** — precision 1.00, recall ≥ 0.95, enforced by
 `tests/test_corpus.py`. The asymmetry is deliberate: including a file that isn't
-the user's is far worse than missing one that is.
+the user's is far worse than missing one that is. The probe's mirror of it is
+**zero false Tier 1**, enforced by `tests/test_probe_corpus.py`.
+
+**Recording** — what a probe manifest holds instead of a live repository: what
+each command really did on a real machine, once, captured by
+`scripts/capture_probe_corpus.py`. A replay exercises the gate logic offline; it
+cannot prove the probe executes anything, which is why `tests/test_probe.py`
+builds repositories that really run.
 
 **Observer** — the daemon that watches the working tree through the day, keeping
 the code graph and the change history current. Run by `polish observe`,
@@ -94,7 +141,6 @@ existence is why a stale graph is never a correctness problem, only a cost.
 `meta.json` and `daemon.pid`. Say *store* for the observer's state and
 *workspace* for `.polish/` as a whole, which also holds snapshots and sandboxes.
 
-Terms from `docs/SPEC.md` not yet exercised by code — *tier probe*, *Tier 0 /
-Tier 1*, *characterization*, *refactor engine*, *verifier*,
-*reporter*, *change queue*, *repair attempt* — are defined there and move here as
-they get built.
+Terms from `docs/SPEC.md` not yet exercised by code — *characterization*,
+*refactor engine*, *verifier*, *reporter*, *change queue*, *repair attempt* —
+are defined there and move here as they get built.

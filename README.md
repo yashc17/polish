@@ -23,7 +23,8 @@ next day.
 ## Status
 
 Early. Three commands work: `polish scan`, `polish observe` and
-`polish run`. The run ships the safety envelope only — it makes no edits yet.
+`polish run`. The run ships the safety envelope and the tier probe — it makes no
+edits yet.
 
 ### `polish observe` — the daytime observer
 
@@ -67,12 +68,22 @@ times. See
 
 ```console
 $ polish run
-run       2026-08-06
-commit    ab394d4
-snapshot  .polish/snapshots/raw/2026-08-06 (37 files)
+run       2026-08-07
+commit    d8b62a3
+snapshot  .polish/snapshots/raw/2026-08-07 (35 files)
 mirrored  3 uncommitted files
-sandbox   .polish/runs/2026-08-06 (removed)
-branch    polish/2026-08-06
+sandbox   .polish/runs/2026-08-07 (removed)
+branch    polish/2026-08-07
+tier      1 (characterization)
+reason    a test suite ran, and first-party modules import cleanly
+gate 1    pass venv: 3 declared requirements installed
+gate 2    pass suite: 113 passing tests across 7 test files
+gate 3    pass imports: 24 first-party modules import cleanly — which promotes nothing (SPEC §3.1)
+gate 4    skip entrypoint: not configured; never run without being asked
+ran       python -m pip install --only-binary :all: pathspec>=1.0 pytest>=8 ruff>=0.6
+ran       python -c import pytest
+ran       python -m pytest -q --tb=no -p no:cacheprovider
+ran       python -c import polish, polish.cli, polish.envelope, ...
 changes   0 (this release ships the safety envelope only)
 ```
 
@@ -82,6 +93,43 @@ leaves your working tree byte-identical — `git status` reads exactly as it did
 before. **This release makes no edits.** The envelope is the payload: the
 refactoring is the commodity, and the guarantee around it is the point, so it
 gets built and proven first.
+
+### The tier probe — what Polish is allowed to claim about your repo
+
+Before anything else happens in the sandbox, Polish works out whether it can
+*execute* your repository, because that decides what it is allowed to promise:
+
+| | **Tier 0** — cannot execute it | **Tier 1** — it runs |
+|---|---|---|
+| Verification | AST-equivalence + type check | characterization tests from real execution |
+| Claim | "provably behaviour-preserving" | "verified against recorded behaviour" |
+
+Four hard gates decide it, in order. No scores and no thresholds — a repository
+cannot average its way into Tier 1:
+
+1. **venv** — do your declared dependencies install? No → Tier 0. This gate runs
+   no code of yours at all.
+2. **suite** — is there a test suite, does it run, does anything pass? Yes → a
+   Tier 1 candidate.
+3. **imports** — does every first-party module import? No → Tier 0. **Yes →
+   nothing.** An import smoke can take Tier 1 away; it can never grant it.
+4. **entrypoint** — only what you named in `polish.toml`, never inferred.
+
+**Gate 3 being demote-only is the point of the design.** Importing a module
+traces constants and definitions — it never enters a function body. A repository
+promoted on that alone would reach Tier 1 with nothing to characterize, and the
+generated tests would pass before and after because the code they cover never
+ran either time. A test like that is worse than no test in a product that sells
+trust, so Tier 1 requires an execution source or it does not happen.
+
+Everything ambiguous — a timeout, an error, an exhausted budget, a refused
+command — resolves **downward**. Being wrongly held at Tier 0 costs you a deeper
+refactor. Being wrongly promoted would attach a verification claim to nothing.
+
+Accuracy is measured against a second hand-labelled corpus (`tests/corpus/probe/`
+— a healthy library, one needing API keys, one needing a GPU, one with no tests)
+and held to **zero false Tier 1** by a regression test. `python
+scripts/corpus_report.py` prints the confusion matrix.
 
 Everything Polish writes lives in `.polish/`, which ignores itself via its own
 `.gitignore` — your `.gitignore` is never edited.
@@ -129,11 +177,42 @@ After a run, your tree is byte-identical and `git status` is unchanged. This is
 covered by tests, not just by intent.
 
 **Your machine is not isolated.** The worktree runs your repository's real code
-— its test suite, its imports, its entry points — as your user, against your
-real filesystem, with your real environment. There is no container and no VM.
-Containment is by command allowlist only, and *that allowlist does not exist
-yet*: it arrives with the Tier 1 edit loop. Until then, treat `polish run` as
-having exactly the privileges you do.
+— its test suite, its imports, its opted-in entry points — as your user, against
+your real filesystem. There is no container and no VM. Containment is by command
+allowlist only.
+
+The allowlist constrains command *shapes*, not a list of program names: **your
+repository never supplies a program.** Everything Polish runs is the sandbox
+virtualenv's own interpreter in one of four forms —
+
+```
+python -m pip install --only-binary :all: <requirement>...
+python -m pytest -q --tb=no -p no:cacheprovider
+python -c "import <module>"
+python -m <module>  |  <script>.py     # only if you asked for it, below
+```
+
+— never through a shell, never with your environment inherited (the child gets a
+built `PATH` and a throwaway `HOME`, so the API keys in your shell do not reach
+it), and never with options your `requirements.txt` chose. Every command a run
+issued is printed in its output, so this is something you can check rather than
+believe.
+
+**What that does not cover, plainly: running your test suite is running your
+code.** `conftest.py` executes at collection, and your own `addopts` reach pytest
+without passing through the allowlist. So the honest claim is narrower than
+"sandboxed" — it is that Polish never becomes a way for a repository to choose
+what runs. Treat `polish run` as having exactly the privileges you do.
+
+Entry points are never run unless you name one yourself:
+
+```toml
+[probe]
+entrypoint = "yourpkg.demo"   # a module, or "scripts/demo.py" — never a shell string
+```
+
+The reasoning, and the two residual holes, are in
+[ADR 0004](docs/adr/0004-a-command-allowlist-of-fixed-shapes.md).
 
 This is deliberate, and it is the design's weakest guarantee. Docker would give
 real isolation but fails exactly where autonomous refactoring matters most —
@@ -150,8 +229,9 @@ polish/
 │   ├── cli.py        #   the polish command
 │   ├── envelope/     #   snapshot, sandbox and branch: the safety envelope
 │   ├── firstparty/   #   first-party source detection
-│   └── observer/     #   the daytime daemon: code graph and change history
-├── tests/            # suite, plus the hand-labelled detection corpus
+│   ├── observer/     #   the daytime daemon: code graph and change history
+│   └── probe/        #   the tier probe: four gates and the command allowlist
+├── tests/            # suite, plus two hand-labelled corpora
 ├── scripts/          # corpus capture and reporting
 └── docs/             # design docs and specs
 ```

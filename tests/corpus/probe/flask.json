@@ -1,0 +1,48 @@
+{
+ "name": "flask",
+ "source": "https://github.com/pallets/flask",
+ "commit": "6a2f545bfd8ed31e19066a299296917e034aca58",
+ "captured": "2026-08-07",
+ "captured_on": "darwin python3.12.7",
+ "note": "Second healthy repository, and the corpus's designed disagreement: 485 tests pass and every flask.* module imports, but the example apps under examples/celery/ need celery, which flask does not declare.",
+ "label_rule": {
+  "reason": "The code Polish would refactor is characterizable, so a human says Tier 1. v1's per-repo rule disagrees: gate 3 demotes the whole repository for eight unimportable modules in examples/ and docs/. Labelled against the code deliberately \u2014 that gap is evidence for open question #4 (per-file tiering), not a bug to relabel away.",
+  "expected_tier": 1
+ },
+ "recorded": {
+  "install": {
+   "code": 0,
+   "timed_out": false,
+   "output": ".6-py2.py3-none-any.whl.metadata (17 kB)\nCollecting filelock>=3.25 (from tox)\n  Downloading filelock-3.32.2-py3-none-any.whl.metadata (2.0 kB)\nCollecting packaging>=26 (from tox)\n  Downloading packaging-26.3-py3-none-any.whl.metadata (3.5 kB)\nCollecting platformdirs>=4.9.4 (from tox)\n  Downloading platformdirs-4.11.0-py3-none-any.whl.metadata (5.5 kB)\nCollecting pluggy>=1.6 (from tox)\n  Downloading pluggy-1.6.0-py3-none-any.whl.metadata (4.8 kB)\nCollecting pyproject-api>=1.10 (from tox)\n  Downloading pyproject_api-1.11.0-py3-none-any.whl.metadata (2.3 kB)\nCollecting python-discovery>=1.4.4 (from tox)\n  Downloading python_discovery-1.5.1-py3-none-any.whl.metadata (5.0 kB)\nCollecting tomli-w>=1.2 (from tox)\n  Downloading tomli_w-1.2.0-py3-none-any.whl.metadata (5.7 kB)\nCollecting virtualenv>=21.1 (from tox)\n  Downloading virtualenv-21.7.1-py3-none-any.whl.metadata (3.5 kB)\nCollecting tox-uv-bare==1.36.0 (from tox-uv)\n  Downloading tox_uv_bare-1.36.0-py3-none-any.whl.metadata (15 kB)\nCollecting uv<1,>=0.9.27 (from tox-uv)\n  Downloading uv-0.12.3-py3-none-macosx_11_0_arm64.whl.metadata (11 kB)\nCollecting iniconfig>=1.0.1 (from pytest)\n  Downloading iniconfig-2.3.0-py3-none-any.whl.metadata (2.5 kB)\nCollecting pygments>=2.7.2 (from pytest)\n  Downloading pygments-2.20.0-py3-none-any.whl.metadata (2.5 kB)\nCollecting distlib<1,>=0.3.7 (from virtualenv>=21.1->tox)\n  Downloading distlib-0.4.3-py2.py3-none-any.whl.metadata (5.3 kB)\nDownloading blinker-1.9.0-py3-none-any.whl (8.5 kB)\nDownloading click-8.4.2-py3-none-any.whl (119 kB)\nDownloading itsdangerous-2.2.0-py3-none-any.whl (16 kB)\nDownloading jinja2-3.1.6-py3-none-any.whl (134 kB)\nDownloading markupsafe-3.0.3-cp312-cp312-macosx_11_0_arm64.whl (12 kB)\nDownloading werkzeug-3.1.8-py3-none-any.whl (226 kB)\nDownloading ruff-0.16.2-py3-none-macosx_11_0_arm64.whl (10.6 MB)\n   \u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501 10.6/10.6 MB 44.5 MB/s eta 0:00:00\nDownloading tox-4.58.0-py3-none-any.whl (223 kB)\nDownloading tox_uv-1.36.0-py3-none-any.whl (6.6 kB)\nDownloading tox_uv_bare-1.36.0-py3-none-any.whl (22 kB)\nDownloading asgiref-3.12.1-py3-none-any.whl (25 kB)\nDownloading pytest-9.1.1-py3-none-any.whl (386 kB)\nDownloading python_dotenv-1.2.2-py3-none-any.whl (22 kB)\nDownloading cachetools-7.1.7-py3-none-any.whl (16 kB)\nDownloading colorama-0.4.6-py2.py3-none-any.whl (25 kB)\nDownloading filelock-3.32.2-py3-none-any.whl (98 kB)\nDownloading iniconfig-2.3.0-py3-none-any.whl (7.5 kB)\nDownloading packaging-26.3-py3-none-any.whl (129 kB)\nDownloading platformdirs-4.11.0-py3-none-any.whl (23 kB)\nDownloading pluggy-1.6.0-py3-none-any.whl (20 kB)\nDownloading pygments-2.20.0-py3-none-any.whl (1.2 MB)\n   \u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501 1.2/1.2 MB 27.0 MB/s eta 0:00:00\nDownloading pyproject_api-1.11.0-py3-none-any.whl (13 kB)\nDownloading python_discovery-1.5.1-py3-none-any.whl (35 kB)\nDownloading tomli_w-1.2.0-py3-none-any.whl (6.7 kB)\nDownloading uv-0.12.3-py3-none-macosx_11_0_arm64.whl (18.4 MB)\n   \u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501 18.4/18.4 MB 31.2 MB/s eta 0:00:00\nDownloading virtualenv-21.7.1-py3-none-any.whl (5.5 MB)\n   \u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501 5.5/5.5 MB 26.6 MB/s eta 0:00:00\nDownloading distlib-0.4.3-py2.py3-none-any.whl (470 kB)\nInstalling collected packages: distlib, uv, tomli-w, ruff, python-dotenv, pygments, pluggy, platformdirs, packaging, markupsafe, itsdangerous, iniconfig, filelock, colorama, click, cachetools, blinker, asgiref, werkzeug, python-discovery, pytest, pyproject-api, jinja2, virtualenv, tox, tox-uv-bare, tox-uv\nSuccessfully installed asgiref-3.12.1 blinker-1.9.0 cachetools-7.1.7 click-8.4.2 colorama-0.4.6 distlib-0.4.3 filelock-3.32.2 iniconfig-2.3.0 itsdangerous-2.2.0 jinja2-3.1.6 markupsafe-3.0.3 packaging-26.3 platformdirs-4.11.0 pluggy-1.6.0 pygments-2.20.0 pyproject-api-1.11.0 pytest-9.1.1 python-discovery-1.5.1 python-dotenv-1.2.2 ruff-0.16.2 tomli-w-1.2.0 tox-4.58.0 tox-uv-1.36.0 tox-uv-bare-1.36.0 uv-0.12.3 virtualenv-21.7.1 werkzeug-3.1.8\n"
+  },
+  "pytest_available": true,
+  "pytest": {
+   "code": 1,
+   "timed_out": false,
+   "output": "........................................................................ [ 14%]\n........................................................................ [ 29%]\n........................................................................ [ 43%]\n............................F........FF................................. [ 58%]\n..........................................FFF........................... [ 73%]\n........................................................................ [ 87%]\n...........................................................              [100%]\n=========================== short test summary info ============================\nFAILED tests/test_cli.py::test_get_version - importlib.metadata.PackageNotFou...\nFAILED tests/test_cli.py::test_no_command_echo_loading_error - assert 'FLASK_...\nFAILED tests/test_cli.py::test_help_echo_loading_error - assert 'FLASK_APP' i...\nFAILED tests/test_instance_config.py::test_uninstalled_module_paths - Asserti...\nFAILED tests/test_instance_config.py::test_uninstalled_package_paths - Assert...\nFAILED tests/test_instance_config.py::test_uninstalled_namespace_paths - Asse...\n6 failed, 485 passed in 1.32s\n"
+  },
+  "entrypoint": null,
+  "unimportable": [
+   "app",
+   "blueprints",
+   "conf",
+   "make_celery",
+   "scaffold",
+   "task_app",
+   "task_app.tasks",
+   "task_app.views"
+  ],
+  "imported": 34
+ },
+ "observed_at_capture": {
+  "tier": 0,
+  "reason": "first-party modules do not import in the sandbox",
+  "gates": [
+   "1 pass venv: 12 declared requirements installed",
+   "2 pass suite: 485 passing tests across 27 test files",
+   "3 fail imports: 8 of 34 first-party modules do not import: conf, make_celery, task_app, task_app.tasks, task_app.views",
+   "4 skip entrypoint: not evaluated: an earlier gate already pinned Tier 0"
+  ]
+ },
+ "shape": "flask"
+}

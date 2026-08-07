@@ -38,4 +38,4 @@ select = ["E", "F", "I", "UP", "B", "SIM"]
 [tool.ruff.lint.isort]
 # `conftest` and `corpus_support` are test-suite modules reached via pytest's
 # rootdir, not installed packages, so ruff needs telling that they are ours.
-known-first-party = ["polish", "conftest", "corpus_support"]
+known-first-party = ["polish", "conftest", "corpus_support", "probe_corpus_support"]

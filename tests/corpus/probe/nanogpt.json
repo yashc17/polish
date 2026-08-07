@@ -1,0 +1,31 @@
+{
+ "name": "nanogpt",
+ "source": "https://github.com/karpathy/nanoGPT",
+ "commit": "3adf61e154c3fe3fca428ad6bc3818b27a3b8291",
+ "captured": "2026-08-07",
+ "captured_on": "darwin python3.12.7",
+ "note": "Needs a GPU and has no test suite: the research-repo shape SPEC \u00a71 says needs Polish most.",
+ "label_rule": {
+  "reason": "No test_*.py or *_test.py anywhere, and no polish.toml entry point, so there is no execution source at all. Tier 1 would have nothing to characterize.",
+  "expected_tier": 0
+ },
+ "recorded": {
+  "install": null,
+  "pytest_available": false,
+  "pytest": null,
+  "entrypoint": null,
+  "unimportable": [],
+  "imported": 0
+ },
+ "observed_at_capture": {
+  "tier": 0,
+  "reason": "no execution source: nothing was found to trace, so there would be nothing to characterize (SPEC \u00a73.1)",
+  "gates": [
+   "1 pass venv: nothing declared; the sandbox virtualenv is enough",
+   "2 fail suite: no test_*.py or *_test.py among the first-party files",
+   "3 skip imports: not evaluated: no execution source, and an import smoke cannot supply one (SPEC \u00a73.1)",
+   "4 skip entrypoint: not configured; never run without being asked"
+  ]
+ },
+ "shape": "nanogpt"
+}
