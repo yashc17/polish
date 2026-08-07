@@ -277,22 +277,44 @@ Criteria 4, 5, and 6 are the product. The rest is plumbing.
 
 ## 5. Open questions
 
-Real unknowns, not decisions being avoided.
+Real unknowns, not decisions being avoided. Each is tracked as a GitHub issue
+whose number matches the question number, and the answer is written up in that
+issue rather than here — this table is the index, not the record.
 
-| # | Question | Why it matters |
-|---|---|---|
-| 1 | **Non-git repos.** `git worktree` needs a repo. Shadow-init, or refuse with instructions? | Common for experimental/scratch projects — exactly Polish's audience. |
-| 2 | **First-party detection.** Distinguishing source from vendored/venv code. Observed: 99.6% of one sample repo's `.py` files were virtualenv. | Getting this wrong means refactoring `site-packages`. Load-bearing, not cosmetic. |
-| 3 | **Tier probe mechanics.** How is "can I run this repo" actually determined — existing test command, entry-point heuristics, import smoke test? | Decides which tier every repo lands in. Probably the highest-risk unknown in the design. |
-| 4 | **Characterization coverage.** What if execution only reaches 15% of the code? Tier 1 for covered paths and Tier 0 elsewhere, or per-file tiering? | Partial coverage is the common case, not the exception. |
-| 5 | **Flaky test detection.** A flake could trigger repair-then-drop on a correct change. Repeat-run detection, or quarantine? | Determines whether Polish is usable on real-world suites. |
-| 6 | **Daemon storage.** Format, location, size bounds, and what happens on crash or version skew. | It's an always-on process in a trust-first product. |
-| 7 | **Model routing.** Single model, or cheap models for mechanical passes? | Big cost lever; a cheap model making an unsafe edit violates the wedge. Needs data, not a guess. |
-| 8 | **Budget default.** What per-run cap is generous enough to be useful and small enough to be safe? | Sets the first-run impression for every user. |
+A question is closed when it has been genuinely answered, and never deleted:
+the rejected alternatives are the most useful part of the answer, and code
+merged against these numbers still cites them.
+
+### Still open — three, all evidence-blocked
+
+None of these can be settled by argument. Each is waiting on a measurement, and
+settling it by conversation beforehand would manufacture a confidence nothing
+had earned — which is the failure §3.1 rejects LLM-written tests for.
+
+| # | Question | Why it matters | What would settle it |
+|---|---|---|---|
+| [4](https://github.com/yashc17/polish/issues/4) | **Characterization coverage.** What if execution only reaches 15% of the code? Tier 1 for covered paths and Tier 0 elsewhere, or per-file tiering? | Partial coverage is the common case, not the exception. | Real coverage distributions from the harness in [#13](https://github.com/yashc17/polish/issues/13); decided in [#14](https://github.com/yashc17/polish/issues/14). |
+| [7](https://github.com/yashc17/polish/issues/7) | **Model routing.** Single model, or cheap models for mechanical passes? | Big cost lever; a cheap model making an unsafe edit violates the wedge. Needs data, not a guess. | The cost-per-verified-and-shipped-change experiment in [#17](https://github.com/yashc17/polish/issues/17). |
+| [8](https://github.com/yashc17/polish/issues/8) | **Budget default.** What per-run cap is generous enough to be useful and small enough to be safe? | Sets the first-run impression for every user. | Token accounting from [#16](https://github.com/yashc17/polish/issues/16), then decided in [#18](https://github.com/yashc17/polish/issues/18). |
+
+### Answered
+
+| # | Question | Answer | Recorded in |
+|---|---|---|---|
+| [1](https://github.com/yashc17/polish/issues/1) | **Non-git repos.** Shadow-init, or refuse with instructions? | Refuse and exit non-zero, printing the `git init` line that fixes it, plus `--init-git` on explicit opt-in. No degraded non-git mode — both fallbacks would have added a second, less-exercised safety path. | [ADR 0002](adr/0002-refuse-non-git-repositories.md) · shipped in [#10](https://github.com/yashc17/polish/issues/10) |
+| [2](https://github.com/yashc17/polish/issues/2) | **First-party detection.** Distinguishing source from vendored/venv code. | Layers compose by successive refinement, not first-match-wins: environment markers prune first and outrank packaging metadata, and `polish.toml` beats everything. | [ADR 0001](adr/0001-marker-evidence-outranks-packaging-metadata.md) · shipped in [#9](https://github.com/yashc17/polish/issues/9) |
+| [3](https://github.com/yashc17/polish/issues/3) | **Tier probe mechanics.** How is "can I run this repo" determined? | Four layered hard gates, no scoring: venv build, test suite, import smoke, opt-in entry points. Import smoke is **demote-only** — passing it promotes nothing, because import-time tracing produces the vacuous tests §3.1 calls corrosive. | [#3](https://github.com/yashc17/polish/issues/3) · to be built in [#12](https://github.com/yashc17/polish/issues/12) |
+| [5](https://github.com/yashc17/polish/issues/5) | **Flaky test detection.** Repeat-run detection, or quarantine? | Both, asymmetrically. The user's suite: a 3× pre-run baseline quarantines flakes, with 2× retry as a backstop. Generated oracles are stricter — any variance across 3 replays and the test is **discarded, never emitted**, because a flaky oracle can pass a broken change. | [#5](https://github.com/yashc17/polish/issues/5) · to be built in [#13](https://github.com/yashc17/polish/issues/13), [#15](https://github.com/yashc17/polish/issues/15) |
+| [6](https://github.com/yashc17/polish/issues/6) | **Daemon storage.** Format, location, size bounds, crash and version skew. | SQLite in a `.polish/` that ignores itself. The graph is verifiable and cold-rebuilds from the tree; the history is not, so a downtime gap reports churn as **UNKNOWN, never "no churn"**. | [ADR 0003](adr/0003-observer-state-in-a-self-ignoring-sqlite-store.md) · shipped in [#19](https://github.com/yashc17/polish/issues/19) |
 
 ---
 
 ## 6. Decision log
+
+Settled by the design interview. Decisions taken *since*, while building, are
+recorded as ADRs in `docs/adr/` and indexed from §5 — each one arrived by
+resolving an open question against real code, which is why it has its own
+document rather than a row here.
 
 | # | Decision | Chosen |
 |---|---|---|

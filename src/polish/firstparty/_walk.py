@@ -3,7 +3,9 @@
 What a repo ignores is the closest thing to a declaration of what it does not
 consider its own, and it is available even when packaging metadata is not. Git
 is not required: the ignore files are read directly, so a directory that was
-never `git init`-ed still resolves (SPEC §5 Q1 leaves non-git repos open).
+never `git init`-ed still resolves. That outlives the question it was written
+under — SPEC §5 Q1 has since settled on refusing to *run* without git (ADR
+0002), but `polish scan` still has to answer for a directory that has none.
 """
 
 from __future__ import annotations
