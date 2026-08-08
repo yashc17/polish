@@ -1,9 +1,14 @@
 """What the probe reads off a repository before it runs anything.
 
-Everything here is static: parsing metadata, naming modules, noticing a test
+Everything here is static: parsing metadata, filtering modules, noticing a test
 suite. It executes nothing, which is what lets gate 1 honestly claim it runs no
 repository code — the gates below only ever act on strings this module produced
 and the allowlist already vetted.
+
+Naming itself lives in `polish.modules` and is shared with the observer's code
+graph (ADR 0009), so that the name gate 3 imports a file by and the name the
+graph resolves an import against are the same name. What stays here is which of
+those modules the probe will touch, which is a question about the probe.
 """
 
 from __future__ import annotations
@@ -11,8 +16,10 @@ from __future__ import annotations
 import re
 import tomllib
 from collections.abc import Iterable, Sequence
-from dataclasses import dataclass
 from pathlib import Path
+
+from polish import modules as _modules
+from polish.modules import Module
 
 #: Optional-dependency and dependency-group names worth installing. A probe
 #: wants the suite's own requirements, not `docs` or `lint`, and installing
@@ -56,22 +63,21 @@ TEST_DIRECTORIES = frozenset({"tests", "test"})
 #: by gate 2 — importing them again outside pytest just invents failures.
 UNIMPORTABLE = frozenset({"__main__.py", "setup.py", "conftest.py"})
 
-IDENTIFIER = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
-
 #: A PEP 508 requirement begins with a name. Anything that begins with a dash,
 #: a dot or a slash is an option or a local path, and gate 1 forwards neither.
 REQUIREMENT = re.compile(r"^[A-Za-z0-9]")
 
 CONFIG_FILENAME = "polish.toml"
 
-
-@dataclass(frozen=True)
-class Module:
-    """A first-party file addressed the way an interpreter would address it."""
-
-    name: str
-    root: Path
-    path: str
+__all__ = [
+    "Module",
+    "import_roots",
+    "is_test_module",
+    "modules",
+    "opted_in",
+    "requirements",
+    "test_files",
+]
 
 
 def requirements(root: Path) -> tuple[str, ...]:
@@ -122,25 +128,31 @@ def is_test_module(relative: str) -> bool:
 def modules(root: Path, first_party: Iterable[str]) -> tuple[Module, ...]:
     """The first-party files gate 3 can import, with the roots that reach them.
 
-    A file's import root is found by walking outwards while `__init__.py` keeps
-    appearing, which is exactly how the interpreter would have resolved it. A
-    file that cannot be addressed as a module — a hyphenated script, a stub — is
-    dropped rather than guessed at: gate 3 demotes on failure, so a name the
-    probe invented would pin a repository to Tier 0 for a reason that was never
-    about the repository.
+    Naming is `polish.modules`' job and not a second copy here (ADR 0009): the
+    observer resolves `import x` against the same names the probe imports by, so
+    a repository cannot be addressed one way for execution and another for its
+    graph. What this adds is the probe's own filter.
+
+    Each file contributes its **address** and no other spelling of itself. Gate 3
+    is demote-only, so importing one file twice under two names could only ever
+    take a tier away. A file that cannot be addressed at all — a hyphenated
+    script, a stub — is dropped rather than guessed at, for the same reason: a
+    name the probe invented would pin a repository to Tier 0 for a reason that
+    was never about the repository.
     """
+    candidates = (
+        relative
+        for relative in first_party
+        if relative.endswith(".py") and not is_test_module(relative)
+    )
     found: dict[str, Module] = {}
-    for relative in sorted(first_party):
-        if not relative.endswith(".py") or is_test_module(relative):
-            continue
-        module = _address(root, relative)
-        if module is not None:
-            found.setdefault(module.name, module)
+    for module in _modules.index(root, candidates).addressed:
+        found.setdefault(module.name, module)
     return tuple(found.values())
 
 
 def import_roots(found: Sequence[Module]) -> tuple[Path, ...]:
-    return tuple(dict.fromkeys(module.root for module in found))
+    return _modules.roots(found)
 
 
 def opted_in(root: Path) -> str | None:
@@ -162,28 +174,6 @@ def opted_in(root: Path) -> str | None:
 def _looks_like_a_test(name: str) -> bool:
     return name.endswith("_test.py") or (
         name.startswith("test_") and name.endswith(".py")
-    )
-
-
-def _address(root: Path, relative: str) -> Module | None:
-    *directories, filename = relative.split("/")
-    stem = filename.removesuffix(".py")
-
-    depth = 0
-    for end in range(len(directories), 0, -1):
-        if not (root.joinpath(*directories[:end]) / "__init__.py").is_file():
-            break
-        depth += 1
-
-    parts = directories[len(directories) - depth :]
-    if stem != "__init__":
-        parts.append(stem)
-    if not parts or not all(IDENTIFIER.match(part) for part in parts):
-        return None
-    return Module(
-        name=".".join(parts),
-        root=root.joinpath(*directories[: len(directories) - depth]),
-        path=relative,
     )
 
 

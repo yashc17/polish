@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import ast
 import hashlib
+from collections.abc import Mapping
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -54,8 +55,12 @@ def digest_of(data: bytes) -> str:
     return hashlib.sha256(data).hexdigest()
 
 
-def parse(root: Path, relative: str, module_index: dict[str, str]) -> FileFacts:
+def parse(root: Path, relative: str, index: Mapping[str, str]) -> FileFacts:
     """Read and analyse one file. Never raises on bad input.
+
+    `index` maps every importable name to the first-party path it names, and is
+    built by `polish.modules` — the same naming the tier probe imports by, so
+    that the graph and the probe cannot disagree about what `import x` means.
 
     A file that will not parse is still a file the graph has to know about — it
     exists, it has a digest, and it may be imported. Losing the whole record
@@ -76,29 +81,8 @@ def parse(root: Path, relative: str, module_index: dict[str, str]) -> FileFacts:
 
     lines = text.splitlines()
     symbols = tuple(_symbols(tree, lines))
-    imports = frozenset(_imports(tree, relative, module_index))
+    imports = frozenset(_imports(tree, relative, index))
     return FileFacts(relative, digest, symbols, imports, parsed=True)
-
-
-def module_index(paths: tuple[str, ...]) -> dict[str, str]:
-    """Map importable module names to first-party paths.
-
-    Both `demo/core.py` → `demo.core` and `demo/__init__.py` → `demo`, so that
-    `from demo import core` and `import demo` both land somewhere real. Only
-    first-party files are indexed, which is what makes the edge set a graph of
-    the user's own code rather than of their dependencies.
-    """
-    index: dict[str, str] = {}
-    for path in paths:
-        if not path.endswith(".py") and not path.endswith(".pyi"):
-            continue
-        parts = path.rsplit(".", 1)[0].split("/")
-        if parts[-1] == "__init__":
-            parts = parts[:-1]
-        if not parts:
-            continue
-        index.setdefault(".".join(parts), path)
-    return index
 
 
 def _symbols(tree: ast.Module, lines: list[str]):

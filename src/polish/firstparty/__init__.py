@@ -1,6 +1,14 @@
 """The first-party file set — the files Polish is willing to refactor.
 
-`scan()` is the whole interface. Everything behind it is private.
+`scan()` answers which files are the user's own. `declared_roots()` answers the
+one question about them that packaging metadata, and nothing else, can settle:
+which directories the repository says its code lives under. Everything else is
+private.
+
+The second is public because module naming needs it (`polish.modules`) and a
+namespace package leaves no `__init__.py` for a walk to find, so the metadata is
+the only evidence there is. It stays here rather than moving: this is the layer
+that reads packaging metadata, and a second reader would be a second answer.
 """
 
 from __future__ import annotations
@@ -48,6 +56,19 @@ class FirstPartySet:
         if isinstance(path, Path):
             path = path.as_posix()
         return str(path) in self._index
+
+
+def declared_roots(root: Path) -> frozenset[str]:
+    """Directories packaging metadata names as holding the repo's code.
+
+    Repo-root-relative posix paths, each one an existing directory. Both
+    readings appear in the wild — a directory *holding* packages
+    (`package-dir`, `packages.find.where`) and a package directory itself
+    (poetry, hatch, flit) — and this layer reports what was declared without
+    deciding which is which, because the two are told apart by the tree rather
+    than by the table the entry was written in.
+    """
+    return _metadata.declared_roots(Path(root).resolve())
 
 
 def scan(root: Path) -> FirstPartySet:
