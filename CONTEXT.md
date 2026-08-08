@@ -337,11 +337,18 @@ cannot edit), then applied one at a time. Say *queue* for the list and *proposed
 change* for an entry that has not been applied yet — the gap between the two is
 where eligibility is decided, so it has a name.
 
-**Eligible** — a proposed change every symbol of which has a surviving oracle,
-and which is therefore allowed Tier 1 treatment. Its opposite is **refused Tier
-1**: the change is declined *before* it is edited, and the run log names the
-symbol that refused it. Distinct from *dropped*, which is a change that was made
-and failed. Refused costs nothing; dropped costs an edit and a repair attempt.
+**Eligible** — a proposed change that clears **both** tables *Tier 1* is tiered
+by: no path it touches was demoted by the probe, and every symbol it touches has
+a surviving oracle. Composed by `min` in `polish.tier1._eligibility`, because
+each table can only ever take a tier away — the probe supplies a *ceiling* ("this
+file could not be imported"), coverage supplies the floor by evidence ("no oracle
+survived for this symbol"), and neither subsumes the other.
+
+Its opposite is **refused Tier 1**: the change is declined *before* it is edited,
+and the run log names what refused it — the demoted path or the uncovered symbol,
+never blurred together, because they are different problems with different fixes.
+Distinct from *dropped*, which is a change that was made and failed. Refused
+costs nothing; dropped costs an edit and a repair attempt.
 
 **Repair attempt** — the one bounded retry a failing change gets, with the
 verification output handed back verbatim (SPEC §3.10). **Exactly one**: zero

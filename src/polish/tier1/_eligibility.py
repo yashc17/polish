@@ -19,23 +19,18 @@ it SPEC §3.9's commit message would say "verified against recorded behaviour"
 about a change whose oracle was thrown away. The claim has to be true of that
 specific change, not of the run.
 
-## The seam left for #28
+**Issue #28 — the probe's per-path ceiling.** A module gate 3 could not import
+is Tier 0 whatever the coverage table says about it, and
+[ADR 0010](../../../docs/adr/0010-a-tier-ceiling-that-gate-three-demotes-per-module.md)
+makes that answerable per path. Both tables bind, and neither subsumes the other:
+the probe supplies a **ceiling** ("this file could not even be imported"),
+coverage supplies the **floor by evidence** ("no oracle survived for this
+symbol"). A change clears only if it clears both, which is a `min` — computed
+here because here is the only place that holds a whole change.
 
-The probe's verdict is still per *repository* — #3 chose that deliberately while
-question #4 was open — so the only per-change evidence that exists today is the
-coverage table, and that is what `resolve` consumes.
-[#28](https://github.com/yashc17/polish/issues/28) makes the verdict per path,
-which adds a second and independent reason a change can be refused: a module
-gate 3 could not even import is Tier 0 whatever the coverage table says about it.
-
-The two answer different halves and neither subsumes the other. The probe would
-supply a **ceiling** ("this file could not be imported"); coverage supplies the
-**floor by evidence** ("no oracle survived for this symbol"). So #28 lands here
-as one more term rather than a rewrite: `resolve` takes the verdict, and `tier`
-becomes `min(verdict.tier_for(change.paths), <what is computed below>)`. The
-refusal line, the blocking list and the loop that consumes them are all
-unchanged — which is the reason for writing the rule as a `min` over independent
-evidence instead of a chain of conditions.
+Composing them as a `min` over independent evidence, rather than as a chain of
+conditions, is what keeps the rule honest as tables get added. Each one only ever
+takes a tier away.
 
 ## The one place the rule is not simply "every symbol in every path"
 
@@ -67,7 +62,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from polish.characterize import Coverage
-from polish.probe import Tier
+from polish.probe import Tier, TierVerdict
 
 from ._agent import Proposed
 
@@ -81,6 +76,9 @@ class Eligibility:
     #: counted, on the same principle as the quarantine list: a developer whose
     #: dedup was refused is owed the symbol that refused it.
     blocking: tuple[str, ...] = ()
+    #: Paths the probe demoted, which hold a change down whatever the coverage
+    #: table says about the symbols in them.
+    demoted: tuple[str, ...] = ()
     #: How many symbols the change touches that do have a surviving oracle.
     #: Carried into the commit message as the evidence behind the tier claim.
     covered: int = 0
@@ -92,7 +90,13 @@ class Eligibility:
         return self.tier is Tier.ONE
 
     def refusal(self) -> str:
-        """One line for the run log, saying exactly what was not verifiable."""
+        """One line for the run log, saying exactly what was not verifiable.
+
+        The two tables get different sentences on purpose. "Polish could not
+        import this file" and "Polish recorded nothing about this function" are
+        different problems with different fixes, and a refusal that blurred them
+        would send a developer looking in the wrong place.
+        """
         if self.eligible:
             return ""
         if self.creates_only:
@@ -101,29 +105,41 @@ class Eligibility:
                 "exist, which is code generation rather than refactoring "
                 "(SPEC §1.2)"
             )
+        if self.demoted:
+            return (
+                f"refused Tier 1: {_listed(self.demoted)} "
+                f"{'was' if len(self.demoted) == 1 else 'were'} demoted by the "
+                "tier probe and could not be imported, so nothing here was "
+                "characterized to verify a change against"
+            )
         if not self.blocking:
             return (
                 "refused Tier 1: nothing it touches was characterized, so no "
                 "recorded behaviour exists to verify the change against"
             )
-        shown = ", ".join(self.blocking[:3])
-        more = f" and {len(self.blocking) - 3} more" if len(self.blocking) > 3 else ""
         return (
-            f"refused Tier 1: {shown}{more} "
+            f"refused Tier 1: {_listed(self.blocking)} "
             f"{'has' if len(self.blocking) == 1 else 'have'} no surviving "
             "characterization oracle, and a change is tiered by the lowest "
             "coverage among the symbols it touches"
         )
 
 
-def resolve(root: Path, change: Proposed, coverage: Coverage) -> Eligibility:
-    """Tier `change` against `coverage`, over everything it could disturb.
+def resolve(
+    root: Path, change: Proposed, coverage: Coverage, verdict: TierVerdict
+) -> Eligibility:
+    """Tier `change` against both tables, over everything it could disturb.
 
     Deliberately wider than the change's own `symbols`. A change rewrites whole
     files, and the agent's account of which symbols it will disturb is a promise
     Polish cannot check — so every symbol in every path it touches is resolved,
     and the declared symbols are added on top in case the agent named something
     in a file it did not list.
+
+    The probe's ceiling is applied to the same paths, and it is checked *first*
+    because it is the stronger statement: a file that could not be imported has
+    no trustworthy coverage record either, so reporting the missing oracles
+    would be reporting a symptom.
     """
     existing = [
         relative for relative in change.paths if (Path(root) / relative).is_file()
@@ -137,22 +153,32 @@ def resolve(root: Path, change: Proposed, coverage: Coverage) -> Eligibility:
         # destination has not described an extraction at all.
         return Eligibility(tier=Tier.ZERO, creates_only=True)
 
+    # Only the paths that exist. A path the probe never saw takes the ceiling
+    # (gate 3 is demote-only, so absence of evidence cannot demote), which is
+    # what keeps a not-yet-created file from holding an extraction down here as
+    # well as in the coverage half below.
+    demoted = tuple(
+        sorted(path for path in existing if verdict.tier_of(path) is Tier.ZERO)
+    )
+
     touched = set(change.symbols)
     for relative in existing:
         touched.update(symbol.name for symbol in coverage.paths.get(relative, ()))
 
-    if not touched:
-        # Existing files, but nothing in them Polish has a coverage record for.
-        # Downward resolution, unchanged: no record is not the same as no
-        # problem, so an empty set of symbols is Tier 0 rather than vacuously
-        # Tier 1.
-        return Eligibility(tier=Tier.ZERO)
-
     blocking = tuple(
         sorted(name for name in touched if coverage.tier_of(name) is Tier.ZERO)
     )
+    # An empty set of symbols resolves to Tier 0 through `Coverage.tier_for`, so
+    # "existing files Polish has no record of" needs no branch of its own:
+    # downward resolution is already the rule, in the one place that states it.
     return Eligibility(
-        tier=coverage.tier_for(touched),
+        tier=min(verdict.tier_for(existing), coverage.tier_for(touched)),
         blocking=blocking,
+        demoted=demoted,
         covered=len(touched) - len(blocking),
     )
+
+
+def _listed(names: tuple[str, ...], limit: int = 3) -> str:
+    shown = ", ".join(names[:limit])
+    return shown + (f" and {len(names) - limit} more" if len(names) > limit else "")

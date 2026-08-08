@@ -276,6 +276,7 @@ def _perform(
         selection.files,
         first_party.files,
         characterization=characterization,
+        verdict=verdict,
         policy=policy,
     )
 
@@ -314,6 +315,7 @@ def _refactor(
     every: tuple[str, ...],
     *,
     characterization: Characterization | None = None,
+    verdict: TierVerdict | None = None,
     policy: Policy | None = None,
 ) -> tuple[tuple[str, ...], tuple[str, ...], str]:
     """Run the tiers the repository earned, committing each change that verifies.
@@ -357,13 +359,14 @@ def _refactor(
         # only something to say. Verification that cannot run is not a verdict.
         declined = str(failure)
 
-    if _tier_one_earned(characterization):
+    if _tier_one_earned(characterization) and verdict is not None:
         assert characterization is not None  # narrowed by _tier_one_earned
         kept, lost, refused = _refactor_tier1(
             sandbox,
             scoped,
             every,
             characterization=characterization,
+            verdict=verdict,
             policy=policy,
         )
         committed += kept
@@ -393,6 +396,7 @@ def _refactor_tier1(
     every: tuple[str, ...],
     *,
     characterization: Characterization,
+    verdict: TierVerdict,
     policy: Policy | None,
 ) -> tuple[list[str], list[str], str]:
     """Run the Tier 1 queue, committing each change that verifies (SPEC §3.9).
@@ -409,6 +413,7 @@ def _refactor_tier1(
             sandbox.worktree,
             scoped,
             characterization=characterization,
+            verdict=verdict,
             venv=sandbox.venv,
             verify_against=every,
             policy=policy,

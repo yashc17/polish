@@ -2,7 +2,7 @@
 
 One public entry point, and everything behind it is private:
 
-    refactor(worktree, files, characterization=..., venv=...)  -> Iterator[Change]
+    refactor(worktree, files, characterization=..., verdict=..., venv=...)
 
 Tier 0 asks "can this edit be justified by reading alone?" and ships the small
 set of transforms where the answer is yes. Tier 1 asks a different question —
@@ -14,10 +14,12 @@ behaviour-preserving* to **verified against recorded behaviour** (SPEC §3.1).
 The loop is four steps per change, and the ticket's acceptance criteria are the
 reason each one is where it is:
 
-1. **Tier the change before touching it** (`_eligibility`). Question #4's rule,
-   plus #5's precondition: a change touching code with no surviving oracle is
-   refused Tier 1 treatment and the log says which symbol refused it. Refused
-   before the edit, so a refusal costs nothing and disturbs nothing.
+1. **Tier the change before touching it** (`_eligibility`). Question #4's rule
+   over both tables that answer it — the probe's per-path ceiling and the
+   trace's per-symbol coverage — plus #5's precondition: a change touching
+   code with no surviving oracle is refused Tier 1 treatment, and the log says
+   what refused it. Refused *before* the edit, so it costs and disturbs
+   nothing.
 2. **Let the agent edit, in the sandbox** (`_agent`). Never the working tree —
    `refactor()` takes a worktree and the envelope only ever hands it one.
 3. **Verify** (`_verify`): the characterization oracles, the repository's own
@@ -48,8 +50,8 @@ from collections.abc import Iterator, Sequence
 from dataclasses import dataclass
 from pathlib import Path
 
-from polish.characterize import Characterization, Policy
-from polish.probe import Runner
+from polish.characterize import Characterization, Coverage, Policy
+from polish.probe import Runner, TierVerdict
 from polish.tier0 import Unverifiable
 
 from . import _eligibility
@@ -148,6 +150,7 @@ def refactor(
     files: Sequence[str],
     *,
     characterization: Characterization,
+    verdict: TierVerdict,
     venv: Path,
     agent: Agent | None = None,
     verify_against: Sequence[str] | None = None,
@@ -160,6 +163,11 @@ def refactor(
     verified, a dropped one has been reverted and the tree is byte-identical to
     what it was. The caller commits each kept change before taking the next,
     which is what makes the branch reviewable commit by commit (SPEC §3.9).
+
+    `characterization` and `verdict` are the two tables an edit is tiered
+    against, and both bind (`_eligibility`). Required rather than optional: a
+    default of "no ceiling information" would silently weaken the rule to the
+    coverage half, which is the shape of mistake this tier cannot afford.
 
     `files` is what may be edited — the run's scope (SPEC §3.6).
     `verify_against` is what the **type check** covers, defaulting to `files`,
@@ -218,7 +226,7 @@ def refactor(
     snapshot = Snapshot.take(worktree, checked)
 
     for proposed in queue:
-        yield _settle(worktree, proposed, engine, verifier, snapshot, coverage)
+        yield _settle(worktree, proposed, engine, verifier, snapshot, coverage, verdict)
 
 
 def _settle(
@@ -227,14 +235,15 @@ def _settle(
     agent: Agent,
     verifier: Verifier,
     snapshot: Snapshot,
-    coverage,
+    coverage: Coverage,
+    verdict: TierVerdict,
 ) -> Change:
     """Take one change from proposed to decided. Never raises.
 
     Criterion 7 lives in the `except` clauses: every way a single change can go
     wrong is caught here and costs that change alone. The queue continues.
     """
-    eligible = _eligibility.resolve(worktree, proposed, coverage)
+    eligible = _eligibility.resolve(worktree, proposed, coverage, verdict)
     if not eligible.eligible:
         # Refused before the edit, so there is nothing to revert. This is the
         # rule from #5's decision comment on #15, and the run log says why —

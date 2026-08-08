@@ -31,7 +31,7 @@ import pytest
 from polish import envelope, tier1
 from polish.characterize import Policy, characterize
 from polish.firstparty import scan
-from polish.probe import Tier
+from polish.probe import Demotion, Tier, TierVerdict
 from polish.tier1 import AgentError, Proposed
 
 #: Smaller N and R. The subject here is the edit loop, not the flake policy.
@@ -203,11 +203,27 @@ def change(summary: str, *paths: str, category: str = "simplify") -> Proposed:
 # --- fixtures -------------------------------------------------------------------
 
 
+def promoted(*demoted: Demotion) -> TierVerdict:
+    """A probe verdict with a Tier 1 ceiling, and whatever gate 3 took away.
+
+    Built rather than probed. These tests are about the edit loop, and running
+    the real probe would make every one of them also a test of gate ordering —
+    `test_probe.py` owns that, and owns it against repositories built to
+    exercise it.
+    """
+    return TierVerdict(
+        ceiling=Tier.ONE,
+        reason="a test suite ran",
+        gates=(),
+        demoted=demoted,
+    )
+
+
 @pytest.fixture
 def tier_one(make_repo, sandbox_venv):
     """Build a repository, characterize it for real, and run the Tier 1 loop."""
 
-    def _run(agent_for, **extra: str):
+    def _run(agent_for, verdict: TierVerdict | None = None, **extra: str):
         root = make_repo(
             {
                 "pyproject.toml": PROJECT,
@@ -227,6 +243,7 @@ def tier_one(make_repo, sandbox_venv):
                 root,
                 [name for name in every if name.startswith("sample/")],
                 characterization=found,
+                verdict=verdict if verdict is not None else promoted(),
                 venv=sandbox_venv,
                 agent=agent,
                 verify_against=every,
@@ -535,6 +552,46 @@ def test_a_change_touching_code_with_no_oracle_is_refused_and_the_log_says_why(
     assert "no surviving characterization oracle" in refusal
 
 
+def test_a_change_to_a_path_the_probe_demoted_is_refused(tier_one):
+    """The other half of question #4's rule, which #28 made answerable.
+
+    `sample/maths.py` has surviving oracles, so the coverage table says Tier 1.
+    The probe says gate 3 could not import it. A file Polish cannot import has
+    no trustworthy recorded behaviour whatever the trace happened to capture, so
+    the ceiling wins — the two tables compose by `min`, and each can only ever
+    take a tier away.
+    """
+    root, agent, changes, _ = tier_one(
+        lambda root: Scripted(
+            root,
+            queue=(change("fold total by hand", "sample/maths.py"),),
+            edits={
+                "fold total by hand": rewrite(
+                    "sample/maths.py", "return sum(values)", "return sum(list(values))"
+                )
+            },
+        ),
+        verdict=promoted(
+            Demotion(
+                module="sample.maths",
+                path="sample/maths.py",
+                detail="raised ImportError",
+            )
+        ),
+    )
+
+    assert kept(changes) == []
+    assert agent.applied == [], "refused before the edit, so nothing to revert"
+
+    refusal = changes[0].evidence[0]
+    assert "demoted by the tier probe" in refusal
+    assert "sample/maths.py" in refusal
+    # And it says *that* rather than blaming the oracles, which are fine here —
+    # a refusal that named the wrong table would send someone to the wrong fix.
+    assert "no surviving characterization oracle" not in refusal
+    assert (root / "sample" / "maths.py").read_text() == MATHS
+
+
 def test_a_not_yet_existing_path_does_not_hold_an_extraction_down(tier_one):
     """The rule's one exception, which extraction depends on.
 
@@ -769,5 +826,5 @@ def test_a_tier_one_repository_still_gets_tier_zero_transforms(
 
     record = envelope.run(root)
 
-    assert record.tier is not None and record.tier.tier_one
+    assert record.tier is not None and record.tier.reaches_tier_one
     assert any("unused import" in subject for subject in record.changes), record.changes

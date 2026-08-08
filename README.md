@@ -383,6 +383,11 @@ Two things are refused before anything is edited, so they cost nothing:
   discarded for being non-deterministic, the code it covered has no recorded
   behaviour, and a commit claiming "verified against recorded behaviour" would be
   false. The run log names the symbol that refused it.
+- **A change touching a file the probe demoted.** A module Polish could not
+  import has no trustworthy recorded behaviour whatever the trace happened to
+  capture. This and the rule above are separate checks and the log keeps them
+  apart — "could not import this file" and "recorded nothing about this function"
+  send you to different fixes.
 - **A change that only creates files.** Polish is not a code generator; it only
   touches code that already exists. A real extraction always says which file it
   is taking the code *out* of.
