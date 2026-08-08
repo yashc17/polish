@@ -7,11 +7,13 @@ change Polish does not make, and the apparatus around the edit is what earns
 the right to be left unattended. It takes the snapshot, builds the sandbox,
 opens the branch, asks the tier probe which engine the repository has earned,
 runs that engine inside it, commits what was proven one change at a time, and
-leaves the working tree exactly as it found it. Five of the v1 acceptance
+leaves the working tree exactly as it found it. Seven of the v1 acceptance
 criteria are settled here — §4.2 (the snapshot byte-matches), §4.3 (the tier
 probe classifies runnable repositories correctly), §4.4 (Tier 0 produces a
-provably behaviour-preserving diff), §4.7 (one reviewable commit per change)
-and §4.9 (the working tree is untouched).
+provably behaviour-preserving diff), §4.5 (every shipped Tier 1 change passes
+its characterization tests), §4.6 (a broken refactor is caught, repaired once,
+and dropped with the failure in the log), §4.7 (one reviewable commit per
+change) and §4.9 (the working tree is untouched).
 """
 
 from __future__ import annotations
@@ -23,7 +25,7 @@ from itertools import count
 from pathlib import Path
 
 from polish import scope as _scope
-from polish import tier0
+from polish import tier0, tier1
 from polish.characterize import Characterization, Policy, characterize
 from polish.firstparty import FirstPartySet, scan
 from polish.probe import Budget, TierVerdict, probe
@@ -270,7 +272,12 @@ def _perform(
 
     # The payload, inside the envelope that was just proven around it.
     committed, dropped, declined = _refactor(
-        sandbox, selection.files, first_party.files
+        sandbox,
+        selection.files,
+        first_party.files,
+        characterization=characterization,
+        verdict=verdict,
+        policy=policy,
     )
 
     # Only now, and only here. A run that raised on the way down has not looked
@@ -303,15 +310,29 @@ def _perform(
 
 
 def _refactor(
-    sandbox: _sandbox.Sandbox, scoped: tuple[str, ...], every: tuple[str, ...]
+    sandbox: _sandbox.Sandbox,
+    scoped: tuple[str, ...],
+    every: tuple[str, ...],
+    *,
+    characterization: Characterization | None = None,
+    verdict: TierVerdict | None = None,
+    policy: Policy | None = None,
 ) -> tuple[tuple[str, ...], tuple[str, ...], str]:
-    """Run Tier 0 in the sandbox, committing each change that verifies.
+    """Run the tiers the repository earned, committing each change that verifies.
 
     `scoped` is what may be edited (SPEC §3.6); `every` is the whole first-party
     set, and is what the type check covers. The scope narrows the work and never
-    the proof: Tier 0's type check is the only gate that can see a binding
-    referenced from another file, so checking only the scope would let a removal
-    that breaks a file just outside it ship as "provably behaviour-preserving".
+    the proof: the type check is the only gate that can see a binding referenced
+    from another file, so checking only the scope would let a change that breaks
+    a file just outside it ship as verified.
+
+    **Tier 0 runs on every repository, including Tier 1 ones**, and Tier 1 runs
+    after it rather than instead of it. SPEC §3.1 defines Tier 1's permissions as
+    "everything in Tier 0, plus" the transforms that need recorded behaviour, so
+    a Tier 1 repository that stopped getting unused-import removal would have
+    been made worse by being promoted. Order matters only in that Tier 0's
+    changes are committed before Tier 1 takes its snapshot, so neither tier sees
+    the other's work as drift.
 
     The day's uncommitted work is committed first, on its own. Without that,
     every refactoring commit would arrive carrying whatever the developer had
@@ -324,6 +345,8 @@ def _refactor(
 
     committed: list[str] = []
     dropped: list[str] = []
+    declined = ""
+
     try:
         for change in tier0.refactor(worktree, scoped, verify_against=every):
             if not change.kept:
@@ -334,8 +357,77 @@ def _refactor(
     except tier0.Unverifiable as failure:
         # Raised before any file is edited, so there is nothing to unwind —
         # only something to say. Verification that cannot run is not a verdict.
-        return tuple(committed), tuple(dropped), str(failure)
-    return tuple(committed), tuple(dropped), ""
+        declined = str(failure)
+
+    if _tier_one_earned(characterization) and verdict is not None:
+        assert characterization is not None  # narrowed by _tier_one_earned
+        kept, lost, refused = _refactor_tier1(
+            sandbox,
+            scoped,
+            every,
+            characterization=characterization,
+            verdict=verdict,
+            policy=policy,
+        )
+        committed += kept
+        dropped += lost
+        declined = declined or refused
+
+    return tuple(committed), tuple(dropped), declined
+
+
+def _tier_one_earned(characterization: Characterization | None) -> bool:
+    """Is there recorded behaviour to verify a Tier 1 change against?
+
+    Not the same question as the probe's. The probe says the repository can be
+    *executed*; this says the execution produced something to check against. A
+    Tier 1 repository whose every generated oracle failed the determinism gate
+    has no recorded behaviour at all, and issue #5's decision is explicit about
+    what happens then: it "falls back to Tier 0 transforms for that run". Running
+    the Tier 1 loop anyway would propose a queue and refuse every entry of it,
+    which is a slower way to reach the same night.
+    """
+    return characterization is not None and bool(characterization.oracles)
+
+
+def _refactor_tier1(
+    sandbox: _sandbox.Sandbox,
+    scoped: tuple[str, ...],
+    every: tuple[str, ...],
+    *,
+    characterization: Characterization,
+    verdict: TierVerdict,
+    policy: Policy | None,
+) -> tuple[list[str], list[str], str]:
+    """Run the Tier 1 queue, committing each change that verifies (SPEC §3.9).
+
+    One commit per kept change, taken *before* the next change is attempted —
+    which is not merely tidy. Tier 1 reverts a dropped change by restoring the
+    bytes it snapshotted, and committing as it goes is what keeps the set of
+    files any single revert has to touch equal to the set that change declared.
+    """
+    committed: list[str] = []
+    dropped: list[str] = []
+    try:
+        for change in tier1.refactor(
+            sandbox.worktree,
+            scoped,
+            characterization=characterization,
+            verdict=verdict,
+            venv=sandbox.venv,
+            verify_against=every,
+            policy=policy,
+        ):
+            if not change.kept:
+                # The failure output travels with the line, because SPEC §3.10
+                # asks for the failure in the log rather than a count of them.
+                dropped += list(change.report())
+                continue
+            _git.commit_paths(sandbox.worktree, change.paths, change.message())
+            committed.append(change.subject())
+    except tier1.Unverifiable as failure:
+        return committed, dropped, str(failure)
+    return committed, dropped, ""
 
 
 def _require_repository(root: Path, *, init_git: bool) -> None:
