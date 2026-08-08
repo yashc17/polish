@@ -85,6 +85,18 @@ CROSS_FILE = {
     ),
 }
 
+#: A `src/` layout with the suite outside it, importing the package absolutely
+#: — `psf/requests` in miniature, and the shape #30 was found on. The boundary
+#: between `src/` and `tests/` is crossed by exactly one edge, and only if the
+#: graph names `src/mypkg/__init__.py` the way an interpreter would.
+SRC_LAYOUT = {
+    "pyproject.toml": '[project]\nname = "mypkg"\n',
+    "src/mypkg/__init__.py": "from mypkg.core import go\n",
+    "src/mypkg/core.py": "def go():\n    return 1\n",
+    "tests/__init__.py": "",
+    "tests/test_go.py": "import mypkg\n\n\ndef test_go():\n    assert mypkg.go()\n",
+}
+
 #: Two top-level modules that import the same third one and never each other.
 #: Flat rather than a package on purpose: a package `__init__.py` is imported by
 #: every module under it, which would connect the siblings for a real reason and
@@ -214,6 +226,28 @@ def test_the_closure_reaches_back_to_the_callers_of_a_changed_file(make_repo):
 
     assert selected.changed == ("demo/c.py",)
     assert {"demo/a.py", "demo/b.py"} <= set(selected.files)
+
+
+def test_the_closure_crosses_a_src_layout_boundary(make_repo):
+    """#30: an edit under `src/` reaches the suite that imports it.
+
+    The whole claim of an incremental scope is that it is not quietly less safe
+    than a sweep, and on this layout it was: the graph indexed
+    `src/mypkg/__init__.py` as `src.mypkg`, `import mypkg` resolved to nothing,
+    and code stranded on the test side of the boundary was never looked at.
+    """
+    repo = make_repo(SRC_LAYOUT)
+    settled(repo)
+
+    rewrite(repo, "src/mypkg/core.py", "def go():\n    return 2\n")
+    watch(repo)
+
+    selected = select(repo)
+
+    assert selected.kind is scope.Kind.INCREMENTAL
+    assert selected.changed == ("src/mypkg/core.py",)
+    assert "tests/test_go.py" in selected.files, "the suite is out of scope"
+    assert "tests/test_go.py" in selected.pulled_in
 
 
 def test_a_file_connected_to_nothing_that_changed_stays_out_of_scope(make_repo):

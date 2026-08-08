@@ -125,6 +125,32 @@ def test_the_graph_records_symbols_and_first_party_imports(make_repo):
     assert "json" not in str(seen.dependencies("demo/api.py"))
 
 
+def test_a_src_layout_repo_is_one_graph_rather_than_two(make_repo):
+    """#30: a file is indexed under the name it is actually importable by.
+
+    Found by dogfooding against `psf/requests`. Addressing a module by its path
+    made `src/mypkg/__init__.py` the module `src.mypkg`, so an absolute
+    `import mypkg` from the suite resolved to nothing — and every file under
+    `tests/` sat in a component of the graph with no edge to any file under
+    `src/`. Nothing failed; the scope was simply narrower than the repository.
+    """
+    repo = make_repo(
+        {
+            "pyproject.toml": '[project]\nname = "mypkg"\n',
+            "src/mypkg/__init__.py": "from mypkg.core import go\n",
+            "src/mypkg/core.py": "def go():\n    return 1\n",
+            "tests/__init__.py": "",
+            "tests/test_go.py": "import mypkg\n\n\ndef test_go():\n    assert mypkg\n",
+        }
+    )
+
+    watch(repo)
+    seen = observer.read(repo)
+
+    assert "src/mypkg/__init__.py" in seen.dependencies("tests/test_go.py")
+    assert "tests/test_go.py" in seen.dependents("src/mypkg/core.py")
+
+
 def test_dependents_returns_the_transitive_closure(make_repo):
     repo = make_repo(
         {
