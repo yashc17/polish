@@ -37,6 +37,8 @@ from polish.probe import (
     Completed,
     NotAllowed,
     Tier,
+    entrypoint,
+    entrypoint_target,
     harness,
     probe,
 )
@@ -474,19 +476,58 @@ def test_the_allowlist_refuses_anything_outside_its_five_shapes(kind, arguments)
 
 
 def test_the_harness_runs_only_the_tasks_polish_wrote(sandbox_venv):
-    """The fifth shape carries a Polish constant, and there is no fourth task.
+    """The fifth shape carries a Polish constant, and only the four in the table.
 
     ADR 0007's argument for admitting the shape at all is that a repository
     cannot influence a single character of it. That argument survives exactly as
     long as the task name is looked up in a table rather than interpolated into
-    a string, which is what this pins.
+    a string, which is what this pins. #32 added a fourth entry to that table and
+    changed nothing else — note in particular that the entry point's *target*
+    does not appear here, because it travels in the harness configuration.
     """
     python = sandbox_venv / "bin" / "python"
     assert harness(python, "suite", 1.0).display() == (
         "python -P -c import _polish_harness as _h; _h.suite()"
     )
+    assert harness(python, "entrypoint", 1.0).display() == (
+        "python -P -c import _polish_harness as _h; _h.entrypoint()"
+    )
     with pytest.raises(NotAllowed):
         harness(python, "suite(); __import__('os').system('id')", 1.0)
+
+
+@pytest.mark.parametrize(
+    "target",
+    [
+        "rm -rf ~; pytest",
+        "../../etc/passwd.py",
+        "/etc/passwd.py",
+        "-c",
+        "scripts/demo.sh",
+        "make test",
+    ],
+)
+def test_an_entry_point_target_is_refused_by_the_same_rule_off_the_command_line(target):
+    """#32 moved the target out of `argv`, and it must not move out of reach.
+
+    Gate 4 gets this check for free, because the target goes into `argv` and
+    `Command` validates `argv` at construction. The harness task carries it in
+    the configuration instead — that is what keeps the fifth shape a constant
+    (ADR 0007) — so `entrypoint_target` is the check standing in for the one the
+    shape no longer performs. If these two ever answer differently, "not on the
+    command line" will have quietly become "not checked".
+    """
+    with pytest.raises(NotAllowed):
+        entrypoint_target(target)
+    with pytest.raises(NotAllowed):
+        entrypoint(Path("/venv/bin/python"), target, 1.0)
+
+
+@pytest.mark.parametrize("target", ["mypkg.demo", "scripts/demo.py"])
+def test_the_two_shapes_an_entry_point_may_take_are_accepted_by_both(target):
+    """The other half of the same property: neither check is merely stricter."""
+    assert entrypoint_target(target) == target
+    assert entrypoint(Path("/venv/bin/python"), target, 1.0).tail[-1] == target
 
 
 def test_every_command_is_the_sandbox_interpreter(make_repo, sandbox_venv):

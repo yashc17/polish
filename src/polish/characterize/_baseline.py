@@ -17,6 +17,11 @@ breaks something.
 Quarantine is used here and *not* for Polish's generated oracles, which are
 discarded instead. The difference is ownership: you cannot delete a user's test,
 and you should not create a non-deterministic one of your own.
+
+None of it applies to a repository whose execution source is gate 4's opted-in
+entry point: there is no suite, so there is nothing to run N times and nothing
+to quarantine. `verify_oracles` below is what that repository gets instead, and
+the log has to say *none* rather than "0 quarantined" (#32).
 """
 
 from __future__ import annotations
@@ -25,7 +30,14 @@ from collections.abc import Sequence
 
 from polish.probe import ORACLES, SUITE
 
-from ._result import ABSENT, SEVERITY, Baseline, Quarantined, Verification
+from ._result import (
+    ABSENT,
+    FROM_ENTRYPOINT,
+    SEVERITY,
+    Baseline,
+    Quarantined,
+    Verification,
+)
 from ._session import Outcome, Session
 
 
@@ -104,6 +116,29 @@ def verify(session: Session, baseline: Baseline, *, oracles: bool) -> Verificati
         ignored=tuple(sorted(_ignored(baseline, attempts[0]))),
         oracle_failures=failures,
     )
+
+
+def verify_oracles(session: Session) -> Verification:
+    """Verification for a repository whose execution source is an entry point.
+
+    There is no suite to re-run, so there is no baseline to compare against, no
+    quarantine to apply and no M=2 retry — the R replays each oracle already
+    survived against unmodified code are the whole determinism gate (#32). That
+    is issue #5's *stricter* half applied on its own rather than alongside the
+    weaker one, which is why this is a real verification and not a thinner one.
+
+    What it deliberately does not do is run the entry point again. That would
+    execute the repository's real side effects once per candidate change, for a
+    signal the oracles already carry: every generated test imports the module
+    under test, so an edit that breaks it at import time fails here anyway, and
+    an edit to code with no surviving oracle is not a Tier 1 edit to begin with.
+    `characterize.verify` refuses outright when no oracle survived, so this
+    never reports a pass over nothing.
+    """
+    failures = _oracle_failures(session)
+    if isinstance(failures, str):
+        return Verification(attempts=0, source=FROM_ENTRYPOINT, declined=failures)
+    return Verification(attempts=0, source=FROM_ENTRYPOINT, oracle_failures=failures)
 
 
 def _oracle_failures(session: Session) -> tuple[str, ...] | str:

@@ -1,7 +1,9 @@
 # ADR 0007 — A fifth command shape, whose program is a Polish constant
 
 **Status:** Accepted · 2026-08-07 · **amends
-[ADR 0006](0006-a-command-allowlist-of-fixed-shapes.md)**
+[ADR 0006](0006-a-command-allowlist-of-fixed-shapes.md)** · self-amended
+2026-08-07 by [#32](https://github.com/yashc17/polish/issues/32), which added a
+fourth task — see **Amendment** below
 **Context:** [#13](https://github.com/yashc17/polish/issues/13), implementing
 [#5](https://github.com/yashc17/polish/issues/5#issuecomment-5212774533) ·
 SPEC §3.1, §3.3, §3.4, §4.5
@@ -45,8 +47,9 @@ document rather than amending it.
 <venv>/bin/python -P -c "import _polish_harness as _h; _h.<task>()"
 ```
 
-where `<task>` is one of exactly three: `suite`, `trace`, `oracles`. The
-validator compares the tail against the values of a dictionary in
+where `<task>` is one of exactly four: `suite`, `trace`, `oracles` and — since
+the amendment below — `entrypoint`. The validator compares the tail against the
+values of a dictionary in
 `polish/probe/_commands.py` — **equality against a constant, not a pattern over
 one.** A shape whose tail is checked for *structure* can always be argued into
 admitting one more thing. A shape whose tail must equal a string in the source
@@ -125,3 +128,43 @@ suite re-runs. The cost is real and is documented where it is paid.
   papered over here. Note it needs a fourth task and not a sixth shape: the
   program stays a constant, and the entry point's target travels in the harness
   configuration like every other parameter.
+
+## Amendment — a fourth task, `entrypoint` (#32)
+
+The consequence above is now closed, in the shape it predicted: **a fourth task,
+not a sixth shape.**
+
+```
+<venv>/bin/python -P -c "import _polish_harness as _h; _h.entrypoint()"
+```
+
+The three properties in **Decision** are unchanged, and the third of them is the
+whole reason this was a one-line addition to a dictionary rather than an
+argument about the allowlist. The entry point's *target* is repository-named —
+`yourpkg.demo`, `scripts/demo.py` — and it does not appear in the command. It
+travels in the harness configuration alongside the module map and the sampling
+limits, so the command is still byte-identical on every repository Polish is
+ever pointed at.
+
+Two things follow that are worth stating rather than discovering.
+
+**"Not in `argv`" must not become "not checked".** Gate 4 gets its target
+validated for free, because the target goes into `argv` and `Command` validates
+`argv` at construction. The harness task does not, so the rule was factored out
+as `probe.entrypoint_target` and both paths now call it. Tests assert the two
+answer identically; if they ever diverge, the configuration channel becomes the
+way to smuggle in what the command line refuses.
+
+**Gate 2 is what put pytest in the sandbox.** A repository promoted by gate 4
+alone never reached gate 2, so nothing installed pytest — and Polish's generated
+oracles *are* pytest tests. Characterization therefore runs the probe's own
+`ensure_pytest` pair (an import smoke, then a `pip install pytest`) before the
+entry point, and declines if it cannot: replaying is what makes an oracle
+trustworthy, so an entry point executed with no way to replay is a user's
+program run for nothing.
+
+**What did not change:** the recorder, the sample format, the oracle generation,
+the replay gate, and the exposure this ADR already named. An entry point is an
+execution source, not a second harness. It does add one exposure of its own,
+which SPEC §3.3 already accounts for: gate 4 ran the user's program once to
+decide the tier, and this runs it once more to record it.

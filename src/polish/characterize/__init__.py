@@ -36,10 +36,16 @@ something about behaviour that Polish has not observed — a wrong pin produces 
 confident oracle for behaviour that never happens, which is strictly worse than
 no oracle because it looks like verification.
 
-**Known gap (#32).** Only a repository promoted by gate 2 gets characterized. One
-promoted solely by gate 4's opted-in entry point has an execution source Polish
-does not yet trace, so it comes back with no oracles and every symbol at Tier 0
-— safe, correct, and less useful than it should be.
+**Both execution sources, not just the suite (#32).** The probe promotes on two
+things — gate 2's suite and gate 4's opted-in entry point — and this package
+traces whichever of them the repository has, in that order. The entry point is
+not a second harness: same recorder, same sample format, same generated oracles,
+same replay gate. What differs is only what got run, and one consequence of it.
+An entry point runs **once**, so there is no flake baseline to take and no
+quarantine step at all, and the R replays of the generated oracles become the
+whole determinism gate — issue #5's stricter rule, standing on its own. The run
+log therefore reports `baseline none`, never the far more comfortable
+"0 quarantined", which would read exactly like a suite measured and found clean.
 """
 
 from __future__ import annotations
@@ -48,10 +54,12 @@ from collections.abc import Iterable, Sequence
 from pathlib import Path
 
 from polish.firstparty import scan
-from polish.probe import TRACE, NotAllowed, Runner
+from polish.probe import ENTRYPOINT, TRACE, NotAllowed, Runner, test_files
 
 from . import _baseline, _coverage, _oracles, _session
 from ._result import (
+    FROM_ENTRYPOINT,
+    FROM_SUITE,
     Baseline,
     Characterization,
     Coverage,
@@ -71,6 +79,8 @@ from ._session import Exhausted, Session
 SCRATCH_DIR = "characterization"
 
 __all__ = [
+    "FROM_ENTRYPOINT",
+    "FROM_SUITE",
     "SCRATCH_DIR",
     "Baseline",
     "Characterization",
@@ -160,14 +170,18 @@ def verify(
     Declines rather than passing when it cannot run. `Verification.passed` is
     false for a declined check, so a change whose verification could not happen
     is a change that does not ship — SPEC §1.1, unchanged.
+
+    What gets checked follows the execution source (#32). A suite repository is
+    checked against both halves: the surviving oracles, and the trusted suite
+    with M retries behind it. An entry-point repository has no suite, so it is
+    checked against the oracles alone — and, because that is then the only check
+    there is, a characterization that produced no oracle is refused here rather
+    than passed for want of anything to disagree with.
     """
-    if characterization.workspace is None or not characterization.baseline.usable:
-        return Verification(
-            attempts=0,
-            declined=characterization.declined
-            or characterization.baseline.declined
-            or "nothing was characterized",
-        )
+    source = characterization.source
+    refused = _cannot_verify(characterization)
+    if refused:
+        return Verification(attempts=0, source=source, declined=refused)
 
     root = Path(root)
     files = tuple(first_party) if first_party is not None else tuple(scan(root).files)
@@ -180,40 +194,130 @@ def verify(
         runner=runner,
     )
     try:
+        if source == FROM_ENTRYPOINT:
+            return _baseline.verify_oracles(session)
         return _baseline.verify(
             session,
             characterization.baseline,
             oracles=bool(characterization.oracles),
         )
     except Exhausted as spent:
-        return Verification(attempts=0, declined=str(spent))
+        return Verification(attempts=0, source=source, declined=str(spent))
     except NotAllowed as refused:
-        return Verification(attempts=0, declined=f"refused: {refused}")
+        return Verification(attempts=0, source=source, declined=f"refused: {refused}")
     except OSError as failure:
-        return Verification(attempts=0, declined=str(failure))
+        return Verification(attempts=0, source=source, declined=str(failure))
+
+
+def _cannot_verify(characterization: Characterization) -> str:
+    """Why this characterization cannot be verified against, or `""`.
+
+    Asked before a session is opened, because every answer here is a refusal and
+    refusing is cheaper than preparing to. The two sources fail differently and
+    for the same underlying reason — there has to be *something* trustworthy to
+    check against, and for a suite repository that is the baseline while for an
+    entry-point one it is the oracles.
+    """
+    if characterization.workspace is None:
+        return characterization.declined or "nothing was characterized"
+    if characterization.source == FROM_ENTRYPOINT:
+        if not characterization.oracles:
+            return (
+                characterization.declined
+                or "the entry point produced no surviving oracle, and it is the "
+                "only execution source this repository has"
+            )
+        return ""
+    if not characterization.baseline.usable:
+        return (
+            characterization.declined
+            or characterization.baseline.declined
+            or "nothing was characterized"
+        )
+    return ""
 
 
 def _perform(root: Path, files: Sequence[str], session: Session) -> Characterization:
-    baseline = _baseline.establish(session)
-    if not baseline.usable:
-        # No trustworthy suite, so no trustworthy anything. Tracing a suite
-        # whose results Polish cannot compare would produce recordings it has
-        # no grounds to believe, which is the vacuous test SPEC §3.1 refuses.
-        return _declined(session, baseline, baseline.declined)
+    """Characterize from whichever execution source the repository actually has.
+
+    Gate 2's suite first, gate 4's entry point only when the suite did not
+    supply one — the probe's own order, and the probe's own rule: an entry point
+    is "not run when gate 2 already supplied a source", because running a user's
+    entry point is the riskiest thing Polish does and a second execution source
+    buys nothing that the first one did not already give.
+
+    The suite is skipped outright when there are no test files, rather than run
+    N times to discover that pytest collects nothing. That is not only a saving:
+    it is what makes `Baseline.runs` zero for an entry-point repository, and a
+    baseline of zero runs is the one that must report *none* rather than "0
+    quarantined" (#32).
+    """
+    baseline = (
+        _baseline.establish(session)
+        if test_files(files)
+        else Baseline(runs=0, declined=_WHY_NO_SUITE)
+    )
     try:
-        return _characterized(root, files, session, baseline)
+        if baseline.usable:
+            return _characterized(root, files, session, baseline)
+        if session.entrypoint:
+            # Either there was no suite at all, or there was one and it cannot
+            # be believed — which is gate 2 supplying no execution source, in
+            # both spellings. Gate 4's is then the one that earned Tier 1, so it
+            # is the one to trace. The unusable baseline is carried along rather
+            # than discarded: "the suite could not be trusted" is a fact about
+            # the repository the developer wants either way.
+            #
+            # Before the entry point runs, not after: if the oracles cannot be
+            # replayed there is nothing to be gained by executing a user's entry
+            # point, and executing one is the riskiest thing Polish does.
+            missing = session.ensure_pytest()
+            if missing:
+                return _declined(session, baseline, missing, FROM_ENTRYPOINT)
+            return _characterized(
+                root,
+                files,
+                session,
+                baseline,
+                task=ENTRYPOINT,
+                seconds=session.policy.entrypoint_seconds,
+                source=FROM_ENTRYPOINT,
+            )
     except Exhausted as spent:
         # The baseline survives the budget running out. Its quarantine list is
         # information the developer wants whether or not the rest happened.
         return _declined(session, baseline, str(spent))
 
+    # No trustworthy suite and no entry point, so no trustworthy anything.
+    # Tracing a suite whose results Polish cannot compare would produce
+    # recordings it has no grounds to believe — the vacuous test SPEC §3.1
+    # refuses — and there is no other source to fall back to.
+    return _declined(session, baseline, baseline.declined)
+
 
 def _characterized(
-    root: Path, files: Sequence[str], session: Session, baseline: Baseline
+    root: Path,
+    files: Sequence[str],
+    session: Session,
+    baseline: Baseline,
+    *,
+    task: str = TRACE,
+    seconds: float | None = None,
+    source: str = FROM_SUITE,
 ) -> Characterization:
-    traced = session.run(TRACE, session.policy.trace_seconds)
+    """Trace one execution source, then generate and replay from what it saw.
+
+    One function for both sources on purpose. Everything after the traced run —
+    the sample format, `_oracles.emit`, the replay gate, `_coverage.measure` —
+    is identical, and #32 is an execution source rather than a second harness.
+    A parallel copy for the entry point would be the first place the two could
+    quietly diverge on which recordings are believed.
+    """
+    traced = session.run(task, seconds or session.policy.trace_seconds)
     if not traced.ok:
-        return _declined(session, baseline, f"the traced run failed — {traced.error}")
+        return _declined(
+            session, baseline, f"the traced {task} failed — {traced.error}", source
+        )
 
     emitted = _oracles.emit(session, traced.payload.get("samples", []))
     return Characterization(
@@ -229,10 +333,13 @@ def _characterized(
         workspace=session.scratch,
         declined=emitted.declined,
         commands=tuple(session.commands),
+        source=source,
     )
 
 
-def _declined(session: Session, baseline: Baseline, reason: str) -> Characterization:
+def _declined(
+    session: Session, baseline: Baseline, reason: str, source: str = FROM_SUITE
+) -> Characterization:
     """Nothing was generated — but the workspace is still handed back.
 
     A run whose trace failed after a clean baseline has no oracles and every
@@ -246,4 +353,11 @@ def _declined(session: Session, baseline: Baseline, reason: str) -> Characteriza
         workspace=session.scratch,
         declined=reason,
         commands=tuple(session.commands),
+        source=source,
     )
+
+
+_WHY_NO_SUITE = (
+    "no test_*.py or *_test.py among the first-party files, so there is no "
+    "suite to run N times and nothing to quarantine"
+)
