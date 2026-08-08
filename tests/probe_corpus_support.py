@@ -127,6 +127,14 @@ class TierMeasurement:
     name: str
     expected: Tier
     observed: Tier
+    #: The paths the verdict actually resolves to Tier 1, and the ones gate 3
+    #: held back. Since #28 the verdict is per path, so the hand label — one
+    #: tier for one repository, stated by a human — is measured against the
+    #: *ceiling*, and these two carry the granularity the ceiling summarises.
+    #: Without them, a demotion that quietly stopped happening would still score
+    #: as a correct row.
+    tier_one_paths: tuple[str, ...] = ()
+    demoted_paths: tuple[str, ...] = ()
 
     @property
     def correct(self) -> bool:
@@ -134,8 +142,16 @@ class TierMeasurement:
 
     @property
     def false_tier_one(self) -> bool:
-        """Labelled Tier 0, classified Tier 1. The error that must never happen."""
-        return self.expected is Tier.ZERO and self.observed is Tier.ONE
+        """Labelled Tier 0, classified Tier 1. The error that must never happen.
+
+        Asked of the ceiling *and* of every path beneath it: a per-path verdict
+        makes false Tier 1 a per-path error, and a repository whose ceiling is
+        Tier 0 while some file in it reads Tier 1 would be the same broken claim
+        wearing finer granularity.
+        """
+        return self.expected is Tier.ZERO and (
+            self.observed is Tier.ONE or bool(self.tier_one_paths)
+        )
 
     @property
     def false_tier_zero(self) -> bool:
@@ -168,7 +184,10 @@ def _load(path: Path) -> ProbeManifest:
 
 
 def format_tier_report(measurements: list[TierMeasurement]) -> str:
-    header = f"{'repo':<14}{'labelled':>10}{'probed':>8}   verdict"
+    header = (
+        f"{'repo':<14}{'labelled':>10}{'ceiling':>9}{'tier 1':>8}{'demoted':>9}"
+        "   verdict"
+    )
     lines = [header, "-" * len(header)]
     for row in sorted(measurements, key=lambda m: m.name):
         if row.false_tier_one:
@@ -177,9 +196,16 @@ def format_tier_report(measurements: list[TierMeasurement]) -> str:
             verdict = "false Tier 0"
         else:
             verdict = "ok"
-        lines += [f"{row.name:<14}{row.expected!s:>10}{row.observed!s:>8}   {verdict}"]
+        # `probed` became two numbers when the verdict became per path (#28):
+        # the ceiling the label is scored against, and how many paths actually
+        # reached it. A repository can now be a correct row and still have most
+        # of itself held at Tier 0, which is the whole point of the change.
+        lines += [
+            f"{row.name:<14}{row.expected!s:>10}{row.observed!s:>9}"
+            f"{len(row.tier_one_paths):>8}{len(row.demoted_paths):>9}   {verdict}"
+        ]
 
-    lines += ["", "confusion matrix (rows labelled, columns probed)", ""]
+    lines += ["", "confusion matrix (rows labelled, columns the probed ceiling)", ""]
     lines += [f"{'':<14}{'probed 0':>10}{'probed 1':>10}"]
     for expected in (Tier.ZERO, Tier.ONE):
         counts = [

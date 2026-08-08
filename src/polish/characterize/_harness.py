@@ -6,7 +6,7 @@ first on `PYTHONPATH`, and runs
 
     <venv>/bin/python -P -c "import _polish_harness as _h; _h.<task>()"
 
-for one of three tasks. It runs under the *sandbox's* interpreter, in a
+for one of four tasks. It runs under the *sandbox's* interpreter, in a
 virtualenv where `polish` is not installed, so it has three hard constraints
 that the rest of the package does not:
 
@@ -21,15 +21,23 @@ that the rest of the package does not:
    the file not exist can make the harness say nothing, and "said nothing" must
    not be readable as "found no flakes".
 
-The three tasks:
+The four tasks:
 
-    suite()     run the repository's own suite; report every test's outcome
-    trace()     the same, with a tracer recording what really got called
-    oracles()   run the characterization tests Polish generated, and only those
+    suite()       run the repository's own suite; report every test's outcome
+    trace()       the same, with a tracer recording what really got called
+    oracles()     run the characterization tests Polish generated, and only those
+    entrypoint()  run gate 4's opted-in target under that same recorder
 
 `suite()` is deliberately the same run three times over for the pre-run baseline
 and again during verification (issue #5): the outcomes are compared between
 runs, so the runs must be identical in every respect Polish controls.
+
+`entrypoint()` is the *other* execution source (#32), not a second harness: it
+feeds the same recorder, writes the same JSON, and everything downstream of it
+— the sample format, the generated oracles, the replay gate — is untouched. It
+exists because the probe promotes on two things and this file only ever ran
+one of them, so a repository that earned Tier 1 through gate 4 alone came back
+with no oracles at all.
 """
 
 from __future__ import annotations
@@ -37,6 +45,7 @@ from __future__ import annotations
 import json
 import math
 import os
+import runpy
 import sys
 import threading
 
@@ -100,20 +109,88 @@ def oracles() -> None:
     )
 
 
+def entrypoint() -> None:
+    """Run gate 4's opted-in target with the tracer attached (#32).
+
+    The target arrives in the configuration rather than on the command line,
+    because it is repository-named and the fifth shape's whole defence is that
+    it carries no repository input (ADR 0007). Polish validates it there by the
+    same rule that guards it in `argv`, so what reaches this function is already
+    a dotted module or a repository-relative `.py` path — never a command line.
+
+    `runpy` rather than `import`, and `run_name="__main__"`, because that is how
+    the probe ran it: gate 4 issued `python -m target` or `python target.py`, and
+    a module executed under any other name is a different program. An entry point
+    guarded by `if __name__ == "__main__":` would otherwise define everything and
+    run nothing, which is the vacuous trace SPEC §3.1 refuses.
+    """
+    _emit(_guard(_traced_entrypoint))
+
+
 def _traced() -> dict:
+    return _record(lambda: _pytest(list(PYTEST_ARGUMENTS)))
+
+
+def _traced_entrypoint() -> dict:
+    target = _configuration().get("entrypoint")
+    if not target:
+        # Polish asked for this task without configuring a target, which is a
+        # bug in Polish rather than anything about the repository. Said plainly,
+        # because the caller turns "the harness reported an error" into a
+        # declined characterization and someone has to be able to read why.
+        return {"error": "the entrypoint task was run with no target configured"}
+    return _record(lambda: _run(str(target)))
+
+
+def _record(work) -> dict:
+    """Run `work` with the recorder attached, and hand back what it saw."""
     recorder = _Recorder(_configuration())
     sys.settrace(recorder.enter)
     # Threads started by the suite are traced too, or a repository that runs its
     # work on a worker would be reported as having executed nothing at all.
     threading.settrace(recorder.enter)
     try:
-        result = _pytest(list(PYTEST_ARGUMENTS))
+        result = work()
     finally:
         sys.settrace(None)
         threading.settrace(None)
     result["samples"] = recorder.samples
     result["executed"] = sorted(recorder.executed)
     return result
+
+
+def _run(target: str) -> dict:
+    """Execute one entry point, and report a non-zero exit as a failure.
+
+    The asymmetry with `_pytest` is deliberate. A non-zero exit from the *suite*
+    is ordinary — gate 2 promotes repositories whose suites already have
+    failures in them — but gate 4 promoted this repository on the strength of
+    the entry point exiting 0, so an entry point that now exits non-zero has
+    stopped being the execution source Polish was told it was. That resolves
+    downward: the recordings from a run that did not finish are not recordings
+    Polish has grounds to believe.
+
+    `sys.argv` is set to the target for the duration, because `python -P -c ...`
+    left `'-c'` sitting in `argv[0]` and an entry point that reports its own
+    name would report Polish's. Nothing is *added* to it: the probe passed the
+    entry point no arguments either, and inventing some here would be running a
+    program the user did not ask for.
+    """
+    argv = list(sys.argv)
+    sys.argv = [target]
+    try:
+        if target.endswith(".py"):
+            runpy.run_path(target, run_name="__main__")
+        else:
+            runpy.run_module(target, run_name="__main__", alter_sys=True)
+    except SystemExit as stopped:
+        code = 0 if stopped.code is None else stopped.code
+        if code == 0:
+            return {"exit": 0}
+        return {"error": f"the entry point exited {code!r}"}
+    finally:
+        sys.argv = argv
+    return {"exit": 0}
 
 
 def _pytest(arguments: list[str]) -> dict:

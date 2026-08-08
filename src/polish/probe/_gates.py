@@ -6,10 +6,20 @@ clears a 60 bar with no test suite at all, and a repository that averages its
 way into Tier 1 has an unearned trust claim attached to it. Hard gates make that
 arithmetic impossible.
 
-    1  isolated venv builds from declared deps     fail -> Tier 0
+    1  isolated venv builds from declared deps     fail -> Tier 0, repository-wide
     2  test suite discovered and runs, >0 passing  pass -> Tier 1 candidate
-    3  import smoke over first-party modules       fail -> Tier 0; pass -> nothing
+    3  import smoke over first-party modules       fail -> Tier 0 per module
     4  opted-in entry point                        pass -> Tier 1 candidate
+
+Gates 1, 2 and 4 answer about the repository, because what they establish is
+repository-wide: a sandbox either builds or does not, and an execution source
+(SPEC §3.1) either exists or does not. What they produce is therefore a
+**ceiling** — the best tier anything here can reach. **Gate 3 subtracts from
+that ceiling one module at a time** (issue #28, question #4): a module that does
+not import is held at Tier 0 and everything that does import keeps the ceiling.
+It used to demote the whole repository, which is how `flask` — 485 passing
+tests, every `flask.*` module importing — was pinned to Tier 0 by eight example
+apps under `examples/` that want celery.
 
 **Gate 3 is demote-only, and that is the load-bearing part.** SPEC §3.1 defines
 Tier 1 as characterization tests from real execution traces. Importing a module
@@ -39,7 +49,16 @@ from time import monotonic
 
 from . import _commands, _discovery
 from ._commands import Command, Completed, NotAllowed
-from ._verdict import FAIL, PASS, SKIP, Budget, GateOutcome, Tier, TierVerdict
+from ._verdict import (
+    FAIL,
+    PASS,
+    SKIP,
+    Budget,
+    Demotion,
+    GateOutcome,
+    Tier,
+    TierVerdict,
+)
 
 Runner = Callable[[Command], Completed]
 
@@ -87,6 +106,26 @@ class Session:
         return self.runner(bounded)
 
 
+@dataclass(frozen=True)
+class Smoke:
+    """Gate 3's answer: an outcome for the log, and a tier for each module.
+
+    The outcome alone was enough while a failure demoted the repository. Now
+    that it demotes per module (#28), the gate has to hand back *which* modules
+    — and `attempted`, so that "eight of a hundred failed" can be told from
+    "all eight of eight failed". They are different repositories and only the
+    second one has nothing left to characterize.
+    """
+
+    outcome: GateOutcome
+    demoted: tuple[Demotion, ...] = ()
+    attempted: int = 0
+
+    @property
+    def nothing_survived(self) -> bool:
+        return self.attempted > 0 and len(self.demoted) == self.attempted
+
+
 def resolve(root: Path, first_party: Sequence[str], session: Session) -> TierVerdict:
     """Walk the gates and return the verdict, with every gate's evidence.
 
@@ -116,7 +155,7 @@ def _walk(
     session: Session,
     reached: list[GateOutcome],
 ) -> TierVerdict:
-    target = _discovery.entrypoint(root)
+    target = _discovery.opted_in(root)
 
     reached.append(_gate_one(root, session))
     if reached[-1].failed:
@@ -125,15 +164,20 @@ def _walk(
         )
 
     suite = _append(reached, _gate_two(root, first_party, session))
-    _append(
-        reached,
-        _gate_three(
-            root, first_party, session, needed=suite.passed or target is not None
-        ),
+    smoke = _gate_three(
+        root, first_party, session, needed=suite.passed or target is not None
     )
-    if reached[-1].failed:
+    reached.append(smoke.outcome)
+
+    # Modules that failed the smoke are held at Tier 0 individually from here
+    # on; they no longer take the repository with them. The one case that still
+    # pins is a repository where *nothing* imported: there is no code left for
+    # the ceiling to apply to, so raising it would be a claim about an empty
+    # set, and gate 4 — the riskiest command the probe has — is not worth
+    # running to decide the tier of nothing.
+    if smoke.nothing_survived:
         return _verdict(
-            Tier.ZERO, _WHY_GATE_THREE, _padded(reached, _WHY_PINNED), session
+            Tier.ZERO, _WHY_GATE_THREE, _padded(reached, _WHY_PINNED), session, smoke
         )
 
     # Gate 4 runs only when it could change the answer. Gate 2 having already
@@ -142,10 +186,10 @@ def _walk(
     entry = _append(reached, _gate_four(session, None if suite.passed else target))
 
     if suite.passed:
-        return _verdict(Tier.ONE, _WHY_SUITE, reached, session)
+        return _verdict(Tier.ONE, _WHY_SUITE, reached, session, smoke)
     if entry.passed:
-        return _verdict(Tier.ONE, _WHY_ENTRYPOINT, reached, session)
-    return _verdict(Tier.ZERO, _WHY_NO_SOURCE, reached, session)
+        return _verdict(Tier.ONE, _WHY_ENTRYPOINT, reached, session, smoke)
+    return _verdict(Tier.ZERO, _WHY_NO_SOURCE, reached, session, smoke)
 
 
 def _gate_one(root: Path, session: Session) -> GateOutcome:
@@ -210,28 +254,45 @@ def _gate_two(root: Path, first_party: Sequence[str], session: Session) -> GateO
 
 def _gate_three(
     root: Path, first_party: Sequence[str], session: Session, *, needed: bool
-) -> GateOutcome:
-    """Do the repository's own modules import? Demote-only — see the docstring."""
+) -> Smoke:
+    """Which of the repository's own modules import? Demote-only, per module.
+
+    The set this produces is closed under the import graph without having to
+    walk it: a module that imports a broken one is itself broken, so it fails
+    the smoke too and arrives here on its own. Nothing that keeps the ceiling
+    depends at import time on anything that lost it.
+    """
     if not needed:
-        return _outcome(3, SKIP, _WHY_SKIP_THREE)
+        return Smoke(_outcome(3, SKIP, _WHY_SKIP_THREE))
 
     found = _discovery.modules(root, first_party)
     if not found:
-        return _outcome(3, PASS, "no addressable first-party modules")
+        return Smoke(_outcome(3, PASS, "no addressable first-party modules"))
 
     failures = _failed_imports(session, [module.name for module in found])
-    if failures:
-        return _outcome(
+    if not failures:
+        return Smoke(
+            _outcome(
+                3,
+                PASS,
+                f"{len(found)} first-party modules import cleanly — which "
+                "promotes nothing (SPEC §3.1)",
+            ),
+            attempted=len(found),
+        )
+    return Smoke(
+        _outcome(
             3,
             FAIL,
-            f"{len(failures)} of {len(found)} first-party modules do not import: "
-            + ", ".join(failures[:5]),
-        )
-    return _outcome(
-        3,
-        PASS,
-        f"{len(found)} first-party modules import cleanly — which promotes "
-        "nothing (SPEC §3.1)",
+            f"{len(failures)} of {len(found)} first-party modules do not import "
+            "and are held at tier 0: " + ", ".join(sorted(failures)[:5]),
+        ),
+        demoted=tuple(
+            Demotion(module=module.name, path=module.path, detail=failures[module.name])
+            for module in found
+            if module.name in failures
+        ),
+        attempted=len(found),
     )
 
 
@@ -262,33 +323,35 @@ def _gate_four(session: Session, target: str | None) -> GateOutcome:
 def _ensure_pytest(session: Session) -> str | None:
     """Make pytest importable in the sandbox, or say why gate 2 cannot proceed.
 
-    A repository with a suite need not declare pytest — plenty of them assume it
-    is simply present — so the probe installs it rather than reporting "no
-    suite" about a repository that plainly has one. Failure here is still a gate
-    2 failure and still resolves downward.
+    Failure here is still a gate 2 failure and still resolves downward. The two
+    commands live in `_commands` because characterization needs the same pair
+    for the same reason (#32), and one implementation is one thing to keep true.
     """
-    smoke = _commands.import_smoke(
-        session.python, ["pytest"], session.budget.import_seconds
+    return (
+        _commands.ensure_pytest(
+            session.python,
+            session.run,
+            import_seconds=session.budget.import_seconds,
+            install_seconds=session.budget.install_seconds,
+        )
+        or None
     )
-    if session.run(smoke).ok:
-        return None
-    install = _commands.pip_install(
-        session.python, ["pytest"], session.budget.install_seconds
-    )
-    if session.run(install).ok:
-        return None
-    return "pytest is not installed in the sandbox and could not be installed"
 
 
-def _failed_imports(session: Session, names: Sequence[str]) -> list[str]:
-    """Import every name, in batches, and attribute the failures.
+def _failed_imports(session: Session, names: Sequence[str]) -> dict[str, str]:
+    """Import every name, in batches, and attribute the failures to a module.
 
     A failing batch is re-run one module at a time. Python stops at the first
     bad name in an `import a, b, c`, so the batch alone can only say that
     something in it broke — and "something broke" is not the evidence issue #12
-    asks the verdict to carry.
+    asks the verdict to carry. Since #28 it is also not enough to *act* on: a
+    demotion names one module, so the failure has to be attributed to one.
+
+    The value is that module's own error, which is what makes the demotion
+    reviewable — `ModuleNotFoundError: celery` reads as somebody's example app,
+    and a `SyntaxError` reads as a repository Polish should be nowhere near.
     """
-    failures: list[str] = []
+    failures: dict[str, str] = {}
     timeout = session.budget.import_seconds
     for start in range(0, len(names), BATCH):
         batch = names[start : start + BATCH]
@@ -296,8 +359,9 @@ def _failed_imports(session: Session, names: Sequence[str]) -> list[str]:
             continue
         for name in batch:
             alone = _commands.import_smoke(session.python, [name], timeout)
-            if not session.run(alone).ok:
-                failures.append(name)
+            result = session.run(alone)
+            if not result.ok:
+                failures[name] = f"does not import: {result.tail(1)}"
     return failures
 
 
@@ -326,17 +390,27 @@ def _padded(reached: Sequence[GateOutcome], reason: str) -> list[GateOutcome]:
 
 
 def _verdict(
-    tier: Tier, reason: str, gates: Sequence[GateOutcome], session: Session
+    tier: Tier,
+    reason: str,
+    gates: Sequence[GateOutcome],
+    session: Session,
+    smoke: Smoke | None = None,
 ) -> TierVerdict:
     return TierVerdict(
-        tier=tier, reason=reason, gates=tuple(gates), commands=tuple(session.commands)
+        ceiling=tier,
+        reason=reason,
+        gates=tuple(gates),
+        demoted=smoke.demoted if smoke is not None else (),
+        commands=tuple(session.commands),
     )
 
 
 _WHY_GATE_ONE = "the sandbox could not be built from the declared dependencies"
-_WHY_GATE_THREE = "first-party modules do not import in the sandbox"
-_WHY_SUITE = "a test suite ran, and first-party modules import cleanly"
-_WHY_ENTRYPOINT = "an opted-in entry point ran, and first-party modules import cleanly"
+_WHY_GATE_THREE = "no first-party module imports in the sandbox"
+_WHY_SUITE = "a test suite ran, so the code that imports can be characterized"
+_WHY_ENTRYPOINT = (
+    "an opted-in entry point ran, so the code that imports can be characterized"
+)
 _WHY_NO_SOURCE = (
     "no execution source: nothing was found to trace, so there would be nothing "
     "to characterize (SPEC §3.1)"

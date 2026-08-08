@@ -28,7 +28,7 @@ from corpus_support import (  # noqa: E402
     pooled,
 )
 from polish.firstparty import NotAPythonProject, scan  # noqa: E402
-from polish.probe import probe  # noqa: E402
+from polish.probe import Tier, probe  # noqa: E402
 from probe_corpus_support import (  # noqa: E402
     FALSE_TIER_ONE_CEILING,
     TierMeasurement,
@@ -75,12 +75,20 @@ def tiering() -> int:
     for manifest in load_probe_manifests():
         with TemporaryDirectory() as directory:
             root = manifest.materialise(Path(directory))
+            first_party = scan(root).files
             verdict = probe(root, venv=root / ".absent", runner=manifest.replay())
+            # Resolved inside the directory's lifetime: since #28 the verdict is
+            # per path, so the report needs the file list the paths refer to.
+            tier_one_paths = tuple(
+                path for path in first_party if verdict.tier_of(path) is Tier.ONE
+            )
         measurements.append(
             TierMeasurement(
                 name=manifest.name,
                 expected=manifest.expected,
-                observed=verdict.tier,
+                observed=verdict.ceiling,
+                tier_one_paths=tier_one_paths,
+                demoted_paths=tuple(item.path for item in verdict.demoted),
             )
         )
 

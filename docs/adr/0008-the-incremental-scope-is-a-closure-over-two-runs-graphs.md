@@ -107,12 +107,14 @@ on: the day's uncommitted work. It would also be confused by any rebase or
 amend.
 
 **Making the tier probe see the scope too.** Cheaper in principle. Rejected
-because the probe's verdict is per-repository (#28 will make it per-symbol), so
-one computed from a subset is a narrower claim wearing the same name — and the
-saving is not where it sounds: gates 1 and 2 take no file set at all, so
-scoping would shrink only gate 3, which is *demote-only*. The single effect
-would be to make demotion less likely, which is the false Tier 1 the probe
-exists to prevent.
+because a verdict computed from a subset is a narrower claim wearing the same
+name — and the saving is not where it sounds: gates 1 and 2 take no file set at
+all, so scoping would shrink only gate 3, which is *demote-only*. The single
+effect would be to make demotion less likely, which is the false Tier 1 the
+probe exists to prevent. *Strengthened by
+[ADR 0010](0010-a-tier-ceiling-that-gate-three-demotes-per-module.md): the
+verdict is now per path and an unsmoked path takes the ceiling, so scoping the
+probe would not narrow the verdict — it would widen it.*
 
 ## Consequences
 
@@ -136,7 +138,9 @@ exists to prevent.
   and the edge is missing. The consequence is a narrower scope, not an unproven
   edit — the type check still covers the whole repository — but it is a real
   hole, found by dogfooding this change against `psf/requests`, and it is
-  tracked in [#30](https://github.com/yashc17/polish/issues/30).
+  tracked in [#30](https://github.com/yashc17/polish/issues/30). *Closed by
+  [ADR 0009](0009-one-module-index-shared-by-the-probe-and-the-graph.md): naming
+  moved to one shared index and the two halves of that graph are one again.*
 - The watermark is per-workspace, so two checkouts of the same repository scope
   independently. That is the desired behaviour and it falls out of `.polish/`
   living beside the tree it describes.

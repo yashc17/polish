@@ -24,7 +24,24 @@ would name their own package that.
 
 **Declared root** — a directory packaging metadata names as holding the repo's
 code (`package-dir`, `packages.find.where`, poetry `packages`, flit `module`).
-Grants exemption from ignore rules, not from markers.
+Grants exemption from ignore rules, not from markers. Read by
+`polish.firstparty.declared_roots()`, which is also where *import root* below
+gets the evidence a walk cannot find.
+
+**Import root** — a directory a module name is relative to: what would be on
+`sys.path` for that name to work. Found by walking outwards from a file while
+`__init__.py` keeps appearing, plus what packaging metadata declares, plus the
+repo root. Say *import root* for the directory and *module name* for the name it
+makes; `polish.modules` is the one place either is decided
+([ADR 0009](docs/adr/0009-one-module-index-shared-by-the-probe-and-the-graph.md)).
+
+**Address** — the one name the interpreter reaches a file by on its own terms,
+as opposed to the other names it is legitimately importable by. A file under
+`src/` is addressed `mypkg` and *also* indexed as `src.mypkg`, because PEP 420
+makes both real. Anything that **executes** an import takes the address only —
+gate 3 is demote-only, so a second spelling of a module already imported could
+only ever cost a tier. Anything that **resolves** an import takes them all: an
+edge the graph does not have is a file the closure never reaches.
 
 **Safety envelope** — the apparatus around an edit: snapshot, sandbox, branch,
 and the refusals that guard them. Built by `polish.envelope.run()` and driven by
@@ -59,15 +76,30 @@ repository, and therefore which engine and which claim it has earned. Run by
 `polish.probe.probe()` inside the sandbox, never against the working tree. Say
 *probe* for the act and *verdict* for what it produces.
 
-**Tier 1** — the tier for a repository Polish *can* execute. Verification is
+**Tier 1** — the tier for code Polish *can* execute. Verification is
 characterization tests from real execution traces and the claim is **verified
 against recorded behaviour** (SPEC §3.1); *Tier 0* below is its counterpart.
-Granularity is **per symbol / per path**: an edit's tier is the *lowest*
-coverage tier among the symbols it touches ([question
-#4](https://github.com/yashc17/polish/issues/14)). The tier probe still returns
-one verdict for the whole repository, which #3 chose deliberately while #4 was
-open; that gap is now a known one rather than a decision. Never say "the repo is
-Tier 1" about anything the probe has not promoted.
+Granularity is **per symbol / per path**: an edit's tier is the *lowest* tier
+among the code it touches ([question
+#4](https://github.com/yashc17/polish/issues/14)) — asked of the probe through
+`TierVerdict.tier_of` and of the trace through `Coverage.tier_for`, both
+binding. Say *this code is Tier 1*, never *this repo is Tier 1*: since
+[ADR 0010](docs/adr/0010-a-tier-ceiling-that-gate-three-demotes-per-module.md) a
+repository does not have one tier to be.
+
+**Ceiling** — the best tier any code in a repository could reach, set by gates
+1, 2 and 4 and carried as `TierVerdict.ceiling`. Repository-wide because what it
+answers is: a sandbox either builds or it does not, and an *execution source*
+either exists or it does not. A **maximum, not a verdict about any file** —
+`reaches_tier_one` asks whether anything here is eligible at all, which is what
+decides whether characterization runs.
+
+**Demotion** — one module gate 3 held below the ceiling, carrying its dotted
+name, its path and its own import error. Say *demoted*, not "failed": the
+verdict is about what may be claimed, not about who is at fault, and a module
+Polish cannot import is unverifiable rather than broken. A path the probe never
+smoked is **not** demoted — it takes the ceiling, because gate 3 is demote-only
+and absence of evidence cannot demote either.
 
 **Gate** — one hard filter in the probe, evaluated in order: *venv*, *suite*,
 *imports*, *entrypoint*. Hard, not scored: a gate cannot contribute partial
@@ -79,7 +111,15 @@ credit, so no repository can average its way into Tier 1. Say *gate*, not
 nothing away and grants nothing, because importing a module traces definitions
 and never enters a function body. Promoting on it would produce the vacuous test
 SPEC §3.1 calls *actively corrosive*. This is the single most load-bearing rule
-in the probe.
+in the probe, and it is what decides the shape of a *demotion*: gate 3 subtracts
+from the *ceiling*, never adds to it.
+
+Characterization traces whichever source the repository has, suite first
+([#32](https://github.com/yashc17/polish/issues/32)) — the same order and the
+same rule as the probe, where gate 4 is not run once gate 2 has supplied one.
+Which source it was is carried on the `Characterization`, because it decides
+what verification is able to check. Say *execution source* for the concept and
+name the gate when it matters; never say "the suite" about an entry point.
 
 **Downward resolution** — the rule that ambiguity, timeout, error, exhausted
 budget and refused command all resolve to Tier 0. Nothing in the probe resolves
@@ -97,10 +137,11 @@ what runs. See [ADR 0006](docs/adr/0006-a-command-allowlist-of-fixed-shapes.md)
 and SPEC §3.3.
 
 **Harness** — the fifth shape, and Polish's own program running inside the
-sandbox: `python -P -c "<a constant in polish's source>"`, doing one of three
-tasks (*suite*, *trace*, *oracles*). Its parameters travel in the environment
-because the command must stay a constant, and `-P` is what stops the repository
-supplying the module. See
+sandbox: `python -P -c "<a constant in polish's source>"`, doing one of four
+tasks (*suite*, *trace*, *oracles*, *entrypoint*). Its parameters travel in the
+environment because the command must stay a constant, and `-P` is what stops the
+repository supplying the module. The entry point's *target* is one of those
+parameters, for exactly that reason. See
 [ADR 0007](docs/adr/0007-a-polish-authored-harness-inside-the-allowlist.md). Say
 *harness* for Polish's program and *suite* for the repository's tests.
 
@@ -126,7 +167,9 @@ what it does is witness, and the value is in having been present.
 
 **Code graph** — the first-party files, the symbols they define, and the import
 edges between them. Verifiable: every file carries a fingerprint, and drift is
-repaired by re-parsing, because the tree is the source of truth.
+repaired by re-parsing, because the tree is the source of truth. Edges are
+resolved through `polish.modules`, the same naming the tier probe imports by, so
+the graph and the probe cannot disagree about what `import x` means.
 
 **Change history** — what the observer saw happen during the day, which
 `git diff` erases: code written at 2pm and deleted at 5pm, and how often a symbol
@@ -229,8 +272,8 @@ verdict, and never read as one: the run ships nothing and says so.
 **Characterization** — what Tier 1 knows about a repository before any edit: the
 suite's flake baseline, the generated oracles that survived replay, and the
 per-symbol coverage. Produced by `polish.characterize.characterize()` inside the
-sandbox. Say *characterization* for the whole record and *oracle* for one test
-in it.
+sandbox, from whichever **execution source** the repository has. Say
+*characterization* for the whole record and *oracle* for one test in it.
 
 **Oracle** — one generated test asserting that a recorded call still returns
 what it was observed returning. Written as a `repr` comparison, not `==`, so
@@ -248,10 +291,17 @@ before any edit exists to bias it. Authoritative because it is the only thing
 that can tell a pre-existing flake from one Polish caused. Distinct from Tier 0's
 type-check baseline; say which when both are in scope.
 
+A repository whose execution source is an entry point has **none**, because an
+entry point runs once and there is nothing to compare. The run log says `none`
+and never "0 quarantined" — that would read exactly like a suite measured and
+found stable, which is **churn**'s UNKNOWN-not-zero rule one component along
+([#32](https://github.com/yashc17/polish/issues/32)).
+
 **Quarantined** — a test whose result was not identical across the baseline's N
 runs. Excluded from the night's verification, **named in the run log**, and
 never able to drop a change. Applied to the *user's* tests, because you cannot
-delete someone else's test.
+delete someone else's test. An entry-point repository has no quarantine step at
+all, rather than an empty one.
 
 **Discarded** — a generated oracle that did not pass identically across all
 **R=3** replays against unmodified code. Deleted, not quarantined. The asymmetry
@@ -277,7 +327,9 @@ Executed is not enough — code with no oracle falls back to Tier 0, or SPEC §3
 commit message would claim "verified against recorded behaviour" for a change
 whose oracle was thrown away. An edit's tier is the lowest among the symbols it
 touches ([question #4](https://github.com/yashc17/polish/issues/14)), looked up
-through `Coverage.tier_for`.
+through `Coverage.tier_for`. The probe's *ceiling* is the other half of the same
+rule and binds independently: the probe says how high a path may reach, the
+coverage tier says what evidence there is, and an edit gets the lower of the two.
 
 **Change queue** — the list of changes an agent proposes for one night, before
 any of them is made. Proposed in a single read-only pass (the planning agent

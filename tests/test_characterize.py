@@ -26,12 +26,13 @@ does not use it.
 from __future__ import annotations
 
 import ast
+import json
 
 import pytest
 
 from polish import envelope
 from polish.characterize import Misconfigured, Policy, characterize, verify
-from polish.probe import Tier
+from polish.probe import Completed, Tier
 
 #: Smaller N and R, for the tests whose subject is not N and R. Every run here
 #: is a real interpreter start and a real pytest collection.
@@ -188,6 +189,83 @@ def test_parse():
     assert parse("12") == 12
     assert parse("nope") == 0
 """
+
+
+#: Gate 4's population, which SPEC §3.1 says needs Tier 1 most: a script that
+#: does the work, and no suite anywhere near it. `report` is reachable only from
+#: `main`, so it is the symbol that says whether the entry point was traced at
+#: all — nothing else in this repository would ever call it.
+MAIN = '''\
+"""The repository's entry point — what `polish.toml` opted in to."""
+
+from sample.maths import add, label, scale
+
+
+def report(count):
+    """Reached only from the entry point, so only tracing it finds this."""
+    return f"{count} calls"
+
+
+def main():
+    add(1, 2)
+    scale([1, 2])
+    label("polish", upper=True)
+    return report(3)
+
+
+if __name__ == "__main__":
+    main()
+    raise SystemExit(0)
+'''
+
+#: The same work, as a script path rather than a dotted module. Both are shapes
+#: the allowlist accepts, and they take different `runpy` doors.
+DEMO = '''\
+"""A script entry point, run by path rather than by module name."""
+
+from sample.maths import add
+
+if __name__ == "__main__":
+    add(4, 5)
+'''
+
+#: An entry point that fails. Gate 4 promoted the repository on this exiting 0,
+#: so an entry point that now exits 3 has stopped being the execution source
+#: Polish was told it was.
+FAILING_MAIN = 'import sys\n\nif __name__ == "__main__":\n    sys.exit(3)\n'
+
+#: Every call an entry point of this shape makes is non-deterministic, so every
+#: candidate oracle is discarded and the repository ends the night with nothing
+#: verifiable at all — which must read as a refusal, not as a pass.
+DRIFTING_MAIN = '''\
+"""An entry point whose every recordable call drifts."""
+
+from sample.drift import ordering, port, roll, stamp
+
+
+def main():
+    return [stamp(), roll(), port(), sorted(ordering())][0]
+
+
+if __name__ == "__main__":
+    main()
+'''
+
+OPTED_IN = '[probe]\nentrypoint = "sample.main"\n'
+
+
+def entry_point_repo(make_repo, opt_in: str = OPTED_IN, **extra: str):
+    """A repository with an opted-in entry point and no test suite at all."""
+    return make_repo(
+        {
+            "pyproject.toml": PROJECT,
+            "polish.toml": opt_in,
+            "sample/__init__.py": "",
+            "sample/maths.py": MATHS,
+            "sample/main.py": MAIN,
+            **extra,
+        }
+    )
 
 
 def counting(name: str, fails_on: str) -> str:
@@ -410,6 +488,7 @@ def test_the_harness_imports_nothing_from_polish(characterized):
         "json",
         "math",
         "os",
+        "runpy",
         "sys",
         "threading",
         "pytest",
@@ -568,6 +647,264 @@ def test_a_suite_that_stops_being_collected_is_a_regression_not_a_pass(
     assert checked.attempts == 3
 
 
+# --- the other execution source (#32) -------------------------------------------
+
+
+def test_an_entry_point_only_repository_produces_oracles(make_repo, sandbox_venv):
+    """#32's whole point: a repository that earned Tier 1 stops getting nothing.
+
+    Before this, the harness traced `pytest.main(...)` and nothing else, so a
+    repository promoted solely by gate 4 came back with no baseline, no
+    recordings and every symbol at Tier 0 — safe, and a wasted night. `report`
+    is the assertion that carries the weight: nothing but the entry point ever
+    calls it, so an oracle for it can only have come from tracing the entry
+    point.
+    """
+    root = entry_point_repo(make_repo)
+
+    found = characterize(root, venv=sandbox_venv, policy=FAST)
+
+    assert not found.declined, found.declined
+    assert named(found.oracles, "sample.main.report").call == "sample.main.report(3)"
+    assert named(found.oracles, "sample.maths.add").expected == "3"
+
+    assert found.coverage.tier_for(["sample.main.report"]) is Tier.ONE
+    assert found.coverage.tier_for(["sample.maths.add"]) is Tier.ONE
+    # And the same rule as ever for what the entry point did not reach.
+    assert not symbol(found.coverage, "sample.maths.never_called").executed
+    assert found.coverage.tier_for(["sample.maths.never_called"]) is Tier.ZERO
+
+
+def test_an_entry_point_repository_has_no_baseline_and_the_log_says_so(
+    make_repo, sandbox_venv
+):
+    """Criterion 4, which is the one an implementation gets wrong by accident.
+
+    An entry point runs once, so there is no N-run comparison to make and no
+    quarantine step at all. The dangerous way to report that is "0 quarantined",
+    which reads exactly like a suite that was measured and found stable — the
+    same mistake as the observer reporting a gap in its history as "no churn".
+    """
+    root = entry_point_repo(make_repo)
+
+    found = characterize(root, venv=sandbox_venv, policy=FAST)
+    summary = "\n".join(found.summary())
+
+    assert found.baseline.runs == 0
+    assert found.baseline.quarantined == ()
+    assert "quarantined" not in summary, summary
+    assert "baseline  none — no test_" in summary, summary
+    assert "the opted-in entry point (gate 4)" in summary, summary
+
+
+def test_the_entry_point_runs_under_the_same_fixed_program_constant(
+    make_repo, sandbox_venv
+):
+    """ADR 0007 survives #32: a fourth task, not a sixth shape, and no target.
+
+    The target is repository-named, so it travels in the harness configuration
+    like every other parameter. If it ever reaches `argv`, the fifth shape stops
+    being a constant and the argument for admitting it at all collapses.
+    """
+    root = entry_point_repo(make_repo)
+
+    found = characterize(root, venv=sandbox_venv, policy=FAST)
+
+    entry = "python -P -c import _polish_harness as _h; _h.entrypoint()"
+    oracles = "python -P -c import _polish_harness as _h; _h.oracles()"
+    # `import pytest` first, because nothing else has put it in this sandbox:
+    # gate 2 never ran, and the oracles about to be replayed are pytest tests.
+    assert found.commands == ("python -c import pytest", entry, oracles, oracles)
+    assert not any("sample.main" in command for command in found.commands)
+
+    # The target is in the configuration instead, which is where the harness
+    # reads it from and where the allowlist has already vetted it.
+    config = json.loads((found.workspace / "config.json").read_text())
+    assert config["entrypoint"] == "sample.main"
+
+
+def test_a_repository_with_both_a_suite_and_an_entry_point_traces_the_suite_only(
+    characterized,
+):
+    """Criterion 3, and gate 4's own rule one layer down.
+
+    Gate 4 is not run when gate 2 already supplied an execution source, because
+    running a user's entry point is the riskiest thing Polish does and a second
+    source buys nothing the first did not. The harness inherits that: `report`
+    is reachable only from the entry point, so its staying at Tier 0 here is the
+    entry point demonstrably not having been run.
+    """
+    _, found = characterized(**{"sample/main.py": MAIN, "polish.toml": OPTED_IN})
+
+    assert not any("_h.entrypoint()" in command for command in found.commands)
+    assert any("_h.trace()" in command for command in found.commands)
+
+    assert found.baseline.runs == 2
+    assert not symbol(found.coverage, "sample.main.report").executed
+    assert found.coverage.tier_for(["sample.main.report"]) is Tier.ZERO
+
+
+def test_an_entry_point_given_as_a_script_path_is_traced_too(make_repo, sandbox_venv):
+    """The allowlist accepts two shapes, so the harness has to run both.
+
+    A dotted module goes through `runpy.run_module` and a path through
+    `runpy.run_path`, and a repository that opted in with a script would
+    otherwise get the silent half of the feature.
+    """
+    root = entry_point_repo(
+        make_repo,
+        opt_in='[probe]\nentrypoint = "scripts/demo.py"\n',
+        **{"scripts/demo.py": DEMO},
+    )
+
+    found = characterize(root, venv=sandbox_venv, policy=FAST)
+
+    assert named(found.oracles, "sample.maths.add").call == "sample.maths.add(4, 5)"
+    # The dotted-module entry point was not run: only what was opted in to was.
+    assert named(found.oracles, "sample.main.report") is None
+
+
+def test_an_entry_point_repository_verifies_against_its_oracles(
+    make_repo, sandbox_venv
+):
+    """The consequence that makes #32 worth building: Tier 1 edits become real.
+
+    `verify()` refused an entry-point characterization outright before this,
+    because it asked the baseline whether it was usable and an entry-point
+    repository has no baseline at all. So the oracles existed and could stop
+    nothing, which is a night's work that still ships nothing.
+    """
+    root = entry_point_repo(make_repo)
+    found = characterize(root, venv=sandbox_venv, policy=FAST)
+
+    checked = verify(root, found, venv=sandbox_venv, policy=FAST)
+
+    assert checked.passed
+    assert checked.oracle_failures == ()
+    assert "the execution source was an opted-in entry point" in "\n".join(
+        checked.evidence()
+    )
+
+    # And the negative, which is the half that has to work: a refactor that
+    # changed behaviour is caught by the oracles alone.
+    (root / "sample" / "maths.py").write_text(MATHS.replace("a + b", "a + b + 1"))
+    broken = verify(root, found, venv=sandbox_venv, policy=FAST)
+
+    assert not broken.passed
+    assert any("add" in nodeid for nodeid in broken.oracle_failures)
+
+
+def test_an_entry_point_that_produced_no_oracle_is_refused_not_passed(
+    make_repo, sandbox_venv
+):
+    """The gap #32 must not open: oracles are the *only* check here.
+
+    A suite repository whose oracles were all discarded still has its trusted
+    suite to fall back on. An entry-point repository has nothing, so a
+    verification that reported "no oracle failures" over zero oracles would be a
+    green light with no evidence behind it — the same shape as the empty
+    baseline `_baseline.establish` already refuses.
+    """
+    root = entry_point_repo(
+        make_repo,
+        opt_in='[probe]\nentrypoint = "sample.drifting"\n',
+        **{"sample/drift.py": DRIFT, "sample/drifting.py": DRIFTING_MAIN},
+    )
+
+    found = characterize(root, venv=sandbox_venv, policy=FAST)
+    assert found.oracles == ()
+    assert found.discarded
+
+    checked = verify(root, found, venv=sandbox_venv, policy=FAST)
+
+    assert not checked.passed
+    assert "no surviving oracle" in checked.declined
+
+
+def test_an_entry_point_that_fails_declines_rather_than_recording_the_run(
+    make_repo, sandbox_venv
+):
+    """Downward resolution, applied to the one gate 4 promoted the repo on.
+
+    A non-zero exit from the *suite* is ordinary — gate 2 promotes repositories
+    whose suites already have failures. A non-zero exit from the entry point is
+    not: it is the repository ceasing to be the execution source Polish was told
+    it was, so what it recorded on the way there is not believed.
+    """
+    root = entry_point_repo(make_repo, **{"sample/main.py": FAILING_MAIN})
+
+    found = characterize(root, venv=sandbox_venv, policy=FAST)
+
+    assert found.oracles == ()
+    assert "exited 3" in found.declined, found.declined
+    assert found.coverage.symbols == ()
+
+
+def test_a_sandbox_without_pytest_declines_before_the_entry_point_runs(
+    make_repo, sandbox_venv
+):
+    """The sandbox gap #32 opens, and the order the answer has to come in.
+
+    Gate 2 is what puts pytest in a sandbox, and a gate 4 repository never
+    reaches it — so without this the entry point would be executed, real calls
+    recorded, real oracles written, and then every one of them discarded because
+    the replay could not start. Wrong twice over: it blames the repository for
+    the sandbox, and it runs a user's entry point for nothing.
+    """
+    root = entry_point_repo(make_repo)
+
+    found = characterize(
+        root,
+        venv=sandbox_venv,
+        policy=FAST,
+        runner=lambda command: Completed(code=1, output="No module named pytest"),
+    )
+
+    assert "pytest is not installed" in found.declined
+    assert found.oracles == ()
+    assert not any("_h.entrypoint()" in command for command in found.commands)
+
+
+def test_a_target_the_allowlist_refuses_is_no_target_at_all(make_repo, sandbox_venv):
+    """The target left `argv` for the configuration; it did not leave the rules.
+
+    Gate 4 already refused this line and said so in the verdict the user reads,
+    so the harness treats it as an absent entry point rather than raising a
+    second time about it — but it must not *run* it, which is what this pins.
+    """
+    root = entry_point_repo(
+        make_repo, opt_in='[probe]\nentrypoint = "rm -rf ~; sample.main"\n'
+    )
+
+    found = characterize(root, venv=sandbox_venv, policy=FAST)
+
+    assert found.commands == ()
+    assert found.oracles == ()
+    assert "no test_" in found.declined
+
+
+def test_a_repository_with_no_suite_and_no_entry_point_runs_no_suite_at_all(
+    make_repo, sandbox_venv
+):
+    """No execution source is a refusal, and a cheap one.
+
+    Running the suite N times to discover pytest collects nothing would be three
+    interpreter starts spent proving what the file list already said — and it
+    would leave `Baseline.runs` at 3, which is what makes a log say "0
+    quarantined" about a repository that has no tests in it.
+    """
+    root = make_repo(
+        {"pyproject.toml": PROJECT, "sample/__init__.py": "", "sample/maths.py": MATHS}
+    )
+
+    found = characterize(root, venv=sandbox_venv, policy=FAST)
+
+    assert found.commands == ()
+    assert found.baseline.runs == 0
+    assert found.oracles == ()
+    assert not verify(root, found, venv=sandbox_venv, policy=FAST).passed
+
+
 # --- refusing, rather than guessing --------------------------------------------
 
 
@@ -681,7 +1018,7 @@ def test_a_night_shift_run_characterizes_a_tier_one_repository(
 
     record = envelope.run(root)
 
-    assert record.tier is not None and record.tier.tier_one
+    assert record.tier is not None and record.tier.reaches_tier_one
     assert record.characterization is not None
     assert record.characterization.baseline.runs == 2
     assert record.characterization.oracles
@@ -691,11 +1028,45 @@ def test_a_night_shift_run_characterizes_a_tier_one_repository(
     assert "coverage  " in summary
 
 
+def test_a_night_shift_run_characterizes_an_entry_point_repository(make_git_repo):
+    """#32 end to end, across the seam it was actually about.
+
+    The gap was never inside the harness — it was between the probe and the
+    harness. The probe promotes on two execution sources and the harness ran
+    one, so this repository is exactly the one that used to be classified Tier 1
+    by gate 4 and then handed nothing to work with. Only the whole pipeline can
+    show that closed: gate 2 has to fail, gate 4 has to promote, and the
+    characterization that follows has to be the entry point's.
+    """
+    root = make_git_repo(
+        {
+            "pyproject.toml": PROJECT,
+            "sample/__init__.py": "",
+            "sample/maths.py": MATHS,
+            "sample/main.py": MAIN,
+            "polish.toml": (
+                f"{OPTED_IN}\n[characterize]\nbaseline_runs = 2\nreplays = 2\n"
+            ),
+        }
+    )
+
+    record = envelope.run(root)
+
+    assert record.tier is not None and record.tier.reaches_tier_one
+    assert "entry point" in record.tier.reason
+    assert record.characterization is not None
+    assert record.characterization.oracles
+
+    summary = "\n".join(record.summary())
+    assert "baseline  none" in summary, summary
+    assert "quarantined" not in summary, summary
+
+
 def test_a_tier_zero_repository_is_not_characterized_at_all(make_git_repo):
     """ "Nothing to characterize" and "characterized nothing" are different facts."""
     record = envelope.run(
         make_git_repo({"pyproject.toml": PROJECT, "sample/__init__.py": ""})
     )
 
-    assert record.tier is not None and not record.tier.tier_one
+    assert record.tier is not None and not record.tier.reaches_tier_one
     assert record.characterization is None

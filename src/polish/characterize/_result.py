@@ -21,6 +21,23 @@ from polish.probe import Tier
 #: table is always on `Coverage`; this bounds the log, not the data.
 DETAIL = 12
 
+#: The two execution sources (CONTEXT.md): gate 2's test suite, and gate 4's
+#: opted-in entry point. Tier 1 requires exactly one of them, and **which one it
+#: was decides what verification is able to check** — a suite can be run N times
+#: before the night and re-run during it, so it has a flake baseline and a
+#: quarantine list; an entry point runs once and has neither (#32). Recorded on
+#: the result rather than re-derived, because a caller that had to guess would
+#: eventually guess "suite" about a repository that does not have one.
+FROM_SUITE = "suite"
+FROM_ENTRYPOINT = "entrypoint"
+
+#: How each one reads in the run log, named by the gate that supplied it so a
+#: reader can line the characterization up against the verdict above it.
+_SOURCES = {
+    FROM_SUITE: "the repository's own test suite (gate 2)",
+    FROM_ENTRYPOINT: "the opted-in entry point (gate 4)",
+}
+
 
 class Misconfigured(Exception):
     """Raised when `[characterize]` in `polish.toml` cannot be honoured.
@@ -66,7 +83,19 @@ class Policy:
     #: `suite_seconds`. A repository whose suite takes four minutes is a
     #: repository whose traced suite may take twenty.
     trace_seconds: float = 1800.0
+    #: The traced entry point (#32), on the same reasoning and generously above
+    #: the probe's own `Budget.entrypoint_seconds`: gate 4 timed a bare run, and
+    #: this one carries a tracer. It is separate from `trace_seconds` because an
+    #: entry point is one program rather than a whole suite, so the two are not
+    #: the same size and tuning one should not move the other.
+    entrypoint_seconds: float = 900.0
     oracle_seconds: float = 300.0
+    #: Putting pytest in the sandbox, which only the entry-point source has to
+    #: do — gate 2's suite could not have run without it already being there.
+    #: The probe's own `Budget` numbers, because it is the probe's own pair of
+    #: commands (#32).
+    import_seconds: float = 60.0
+    install_seconds: float = 300.0
     #: The ceiling on everything above. The 3x baseline alone triples suite
     #: runtime before a single edit is attempted, which on a large repository is
     #: the dominant cost of the night — this is where that gets bounded.
@@ -195,6 +224,24 @@ class Baseline:
     @property
     def usable(self) -> bool:
         return not self.declined
+
+    def summary(self) -> str:
+        """The `baseline` line of the run log, and what it must not say.
+
+        A baseline that never ran reports `none`, never `0 quarantined` (#32).
+        The two are a world apart and the second is the more comfortable lie: a
+        repository whose execution source is gate 4's entry point has no suite
+        to be flaky, and a log claiming a clean quarantine over zero runs reads
+        exactly like a suite that was measured and found stable. Same rule as
+        the observer's UNKNOWN-not-zero churn, one component along.
+        """
+        if not self.runs:
+            return f"none — {self.declined or 'the suite was never run'}"
+        return (
+            f"{self.runs}x suite, {len(self.trusted)} trusted, "
+            f"{len(self.quarantined)} quarantined"
+            + (f" — {self.declined}" if self.declined else "")
+        )
 
 
 @dataclass(frozen=True)
@@ -347,6 +394,11 @@ class Verification:
     ignored: tuple[str, ...] = ()
     oracle_failures: tuple[str, ...] = ()
     declined: str = ""
+    #: Which execution source the characterization came from. `FROM_ENTRYPOINT`
+    #: means there was no suite to re-run, so the oracles are the whole check —
+    #: and the evidence below says that rather than reporting a clean suite over
+    #: zero attempts, which is the same false comfort `Baseline.summary` refuses.
+    source: str = FROM_SUITE
 
     @property
     def passed(self) -> bool:
@@ -357,8 +409,7 @@ class Verification:
         if self.declined:
             return (f"Verification: could not run — {self.declined}",)
         lines = [
-            f"Suite: {'clean' if not self.failed else _count(self.failed, 'failure')}"
-            f" over {_count_of(self.attempts, 'attempt')}",
+            _suite_evidence(self),
             f"Oracles: {'passed' if not self.oracle_failures else 'FAILED'}",
         ]
         if self.flaky:
@@ -388,17 +439,18 @@ class Characterization:
     #: Why there is nothing here, when that is the answer.
     declined: str = ""
     commands: tuple[str, ...] = ()
+    #: Which of the probe's two execution sources this was traced from. Read by
+    #: `verify()`, which cannot check a suite that a repository does not have.
+    source: str = FROM_SUITE
 
     def summary(self) -> tuple[str, ...]:
         """One fact per line, in the same register as the tier verdict."""
         lines = [
-            _line(
-                "baseline",
-                f"{self.baseline.runs}x suite, "
-                f"{len(self.baseline.trusted)} trusted, "
-                f"{len(self.baseline.quarantined)} quarantined"
-                + (f" — {self.baseline.declined}" if self.baseline.declined else ""),
-            )
+            # Which execution source the night's oracles came from. First,
+            # because it is what makes the `baseline` line beneath it legible:
+            # an entry point has no suite, so it has no quarantine either.
+            _line("source", _SOURCES.get(self.source, self.source)),
+            _line("baseline", self.baseline.summary()),
         ]
         # Named, not counted (issue #13, criterion 4). A flaky suite is
         # information the developer wants, and it explains why some code got
@@ -432,6 +484,19 @@ def _section(path: Path) -> dict:
         return {}
     section = data.get("characterize", {})
     return section if isinstance(section, dict) else {}
+
+
+def _suite_evidence(checked: Verification) -> str:
+    """What the repository's own suite said, or why it said nothing."""
+    if checked.source == FROM_ENTRYPOINT:
+        return (
+            "Suite: none — the execution source was an opted-in entry point, "
+            "so the oracles are the whole check"
+        )
+    return (
+        f"Suite: {'clean' if not checked.failed else _count(checked.failed, 'failure')}"
+        f" over {_count_of(checked.attempts, 'attempt')}"
+    )
 
 
 def _line(label: str, value: str) -> str:
