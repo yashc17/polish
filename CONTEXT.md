@@ -59,15 +59,30 @@ repository, and therefore which engine and which claim it has earned. Run by
 `polish.probe.probe()` inside the sandbox, never against the working tree. Say
 *probe* for the act and *verdict* for what it produces.
 
-**Tier 1** — the tier for a repository Polish *can* execute. Verification is
+**Tier 1** — the tier for code Polish *can* execute. Verification is
 characterization tests from real execution traces and the claim is **verified
 against recorded behaviour** (SPEC §3.1); *Tier 0* below is its counterpart.
-Granularity is **per symbol / per path**: an edit's tier is the *lowest*
-coverage tier among the symbols it touches ([question
-#4](https://github.com/yashc17/polish/issues/14)). The tier probe still returns
-one verdict for the whole repository, which #3 chose deliberately while #4 was
-open; that gap is now a known one rather than a decision. Never say "the repo is
-Tier 1" about anything the probe has not promoted.
+Granularity is **per symbol / per path**: an edit's tier is the *lowest* tier
+among the code it touches ([question
+#4](https://github.com/yashc17/polish/issues/14)) — asked of the probe through
+`TierVerdict.tier_of` and of the trace through `Coverage.tier_for`, both
+binding. Say *this code is Tier 1*, never *this repo is Tier 1*: since
+[ADR 0010](docs/adr/0010-a-tier-ceiling-that-gate-three-demotes-per-module.md) a
+repository does not have one tier to be.
+
+**Ceiling** — the best tier any code in a repository could reach, set by gates
+1, 2 and 4 and carried as `TierVerdict.ceiling`. Repository-wide because what it
+answers is: a sandbox either builds or it does not, and an *execution source*
+either exists or it does not. A **maximum, not a verdict about any file** —
+`reaches_tier_one` asks whether anything here is eligible at all, which is what
+decides whether characterization runs.
+
+**Demotion** — one module gate 3 held below the ceiling, carrying its dotted
+name, its path and its own import error. Say *demoted*, not "failed": the
+verdict is about what may be claimed, not about who is at fault, and a module
+Polish cannot import is unverifiable rather than broken. A path the probe never
+smoked is **not** demoted — it takes the ceiling, because gate 3 is demote-only
+and absence of evidence cannot demote either.
 
 **Gate** — one hard filter in the probe, evaluated in order: *venv*, *suite*,
 *imports*, *entrypoint*. Hard, not scored: a gate cannot contribute partial
@@ -79,7 +94,8 @@ credit, so no repository can average its way into Tier 1. Say *gate*, not
 nothing away and grants nothing, because importing a module traces definitions
 and never enters a function body. Promoting on it would produce the vacuous test
 SPEC §3.1 calls *actively corrosive*. This is the single most load-bearing rule
-in the probe.
+in the probe, and it is what decides the shape of a *demotion*: gate 3 subtracts
+from the *ceiling*, never adds to it.
 
 **Downward resolution** — the rule that ambiguity, timeout, error, exhausted
 budget and refused command all resolve to Tier 0. Nothing in the probe resolves
@@ -270,7 +286,9 @@ Executed is not enough — code with no oracle falls back to Tier 0, or SPEC §3
 commit message would claim "verified against recorded behaviour" for a change
 whose oracle was thrown away. An edit's tier is the lowest among the symbols it
 touches ([question #4](https://github.com/yashc17/polish/issues/14)), looked up
-through `Coverage.tier_for`.
+through `Coverage.tier_for`. The probe's *ceiling* is the other half of the same
+rule and binds independently: the probe says how high a path may reach, the
+coverage tier says what evidence there is, and an edit gets the lower of the two.
 
 Terms from `docs/SPEC.md` not yet exercised by code — *Agent SDK edits*,
 *verifier*, *reporter*, *change queue*, *repair attempt* — are defined there and

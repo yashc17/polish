@@ -198,7 +198,7 @@ def test_the_run_log_carries_the_tier_verdict_and_its_evidence(completed_run):
     summary = record.summary()
 
     assert record.tier is not None
-    assert record.tier.tier is Tier.ZERO  # REPO has no suite and no entry point
+    assert record.tier.ceiling is Tier.ZERO  # REPO has no suite and no entry point
     assert sum(1 for line in summary if line.startswith("gate ")) == 4
     assert any("no execution source" in line for line in summary)
     # The tier is decided before the payload and reads that way (SPEC §2).
@@ -228,7 +228,7 @@ def test_the_probe_runs_in_the_sandbox_and_never_in_the_working_tree(make_git_re
 
     record = envelope.run(root, keep_sandbox=True)
 
-    assert record.tier.tier is Tier.ONE  # promoted by the entry point, not imports
+    assert record.tier.ceiling is Tier.ONE  # promoted by the entry point, not imports
     assert not (root / "probe-was-here").exists()
     assert (record.worktree / "probe-was-here").is_file()
 
@@ -239,7 +239,7 @@ def test_a_probe_budget_of_nothing_still_produces_a_run(make_git_repo):
 
     record = envelope.run(root, budget=Budget(total_seconds=0.0))
 
-    assert record.tier.tier is Tier.ZERO
+    assert record.tier.ceiling is Tier.ZERO
     assert record.branch.startswith(envelope.BRANCH_PREFIX)
     assert record.snapshot.is_dir()
 

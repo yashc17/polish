@@ -4,8 +4,9 @@ Issue #13 asks for coverage "at a granularity finer than the whole repo", and
 question #4 turned that from a nicety into the input to the tiering rule itself:
 *an edit's tier is the lowest coverage tier among the symbols it touches*. So
 what this module produces is not a report — it is the table that rule is looked
-up in. The tier probe's single per-repository verdict is a separate and known
-gap, tracked in #28, and deliberately not closed here.
+up in. The tier probe answers the other half of that rule (#28), per path rather
+than per symbol: it says how high a file may reach, and this table says what
+evidence there is. Both bind, and an edit gets the lower of the two.
 
 The denominator comes from parsing, and the numerator from the trace. That split
 matters: a symbol nothing ever called has to be *visible* as uncovered, and a

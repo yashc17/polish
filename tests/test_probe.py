@@ -75,7 +75,7 @@ def gate(verdict, number: int):
 def test_a_repo_with_a_passing_suite_reaches_tier_one(probe_repo):
     verdict = probe_repo({**PACKAGE, **PASSING_SUITE})
 
-    assert verdict.tier is Tier.ONE
+    assert verdict.ceiling is Tier.ONE
     assert gate(verdict, 2).status == PASS
     assert "1 passing tests" in gate(verdict, 2).detail
 
@@ -96,7 +96,7 @@ def test_a_src_layout_repo_is_addressed_the_way_the_interpreter_would(probe_repo
         }
     )
 
-    assert verdict.tier is Tier.ONE
+    assert verdict.ceiling is Tier.ONE
     assert "2 first-party modules" in gate(verdict, 3).detail
     # The names themselves, not just the count. `src.mypkg.core` also imports —
     # Python 3 makes `src/` an implicit namespace package — so a probe that
@@ -114,11 +114,11 @@ def test_a_mostly_failing_suite_still_reaches_tier_one(probe_repo):
         }
     )
 
-    assert verdict.tier is Tier.ONE
+    assert verdict.ceiling is Tier.ONE
     assert "1 passing tests" in gate(verdict, 2).detail
 
 
-# --- gate 3 is demote-only ----------------------------------------------------
+# --- gate 3 is demote-only, one module at a time ------------------------------
 
 
 def test_clean_imports_do_not_promote_a_repo_with_no_suite(probe_repo):
@@ -131,7 +131,7 @@ def test_clean_imports_do_not_promote_a_repo_with_no_suite(probe_repo):
     """
     verdict = probe_repo(PACKAGE)
 
-    assert verdict.tier is Tier.ZERO
+    assert verdict.ceiling is Tier.ZERO
     assert gate(verdict, 1).status == PASS
     assert gate(verdict, 2).status == FAIL
     assert gate(verdict, 3).status == SKIP
@@ -139,22 +139,114 @@ def test_clean_imports_do_not_promote_a_repo_with_no_suite(probe_repo):
     assert "no execution source" in verdict.reason
 
 
-def test_a_module_that_does_not_import_demotes_a_passing_suite(probe_repo):
-    """Gate 3's real job: taking Tier 1 away from a repository that earned it.
+def test_a_module_that_does_not_import_is_demoted_and_its_neighbours_are_not(
+    probe_repo,
+):
+    """Gate 3's real job, at the granularity question #4 settled on (#28).
 
-    The suite passes, so gate 2 promotes. But half the repository needs a GPU
-    that is not there, and characterizing code that cannot even be imported
+    The suite passes, so gate 2 sets a Tier 1 ceiling. But one module needs a
+    GPU that is not there, and characterizing code that cannot even be imported
     would produce recorded behaviour for the fraction that loads and silence for
-    the rest.
+    the rest. Before #28 that one module pinned the whole repository — the
+    `flask` shape, where eight example apps outvoted 485 passing tests.
+
+    So the demotion is now the module's own, and `mypkg/core.py` — which
+    imports, and which the suite really executed — keeps what it earned.
     """
     verdict = probe_repo(
         {**PACKAGE, **PASSING_SUITE, "mypkg/train.py": "import torch\n"}
     )
 
-    assert verdict.tier is Tier.ZERO
     assert gate(verdict, 2).status == PASS
     assert gate(verdict, 3).status == FAIL
     assert "mypkg.train" in gate(verdict, 3).detail
+
+    assert verdict.ceiling is Tier.ONE
+    assert verdict.tier_of("mypkg/train.py") is Tier.ZERO
+    assert verdict.tier_of("mypkg/core.py") is Tier.ONE
+
+
+def test_a_demotion_names_the_path_and_the_error_that_caused_it(probe_repo):
+    """Issue #28's last criterion: the log says which code, which tier, and why.
+
+    A count would answer only the first half. A developer reading this at 3am
+    wants to know whether the demoted file is their own package or somebody's
+    example app, and `ModuleNotFoundError: torch` is the sentence that says so.
+    """
+    verdict = probe_repo(
+        {**PACKAGE, **PASSING_SUITE, "mypkg/train.py": "import torch\n"}
+    )
+
+    (demotion,) = verdict.demoted
+    assert demotion.module == "mypkg.train"
+    assert demotion.path == "mypkg/train.py"
+    assert "torch" in demotion.detail
+
+    log = "\n".join(verdict.summary())
+    assert "mypkg/train.py" in log
+    assert "1 paths held at tier 0" in log
+
+
+def test_an_edit_spanning_two_tiers_resolves_to_the_lower_one(probe_repo):
+    """Question #4's resolution rule, on the verdict: the *lowest* tier wins.
+
+    Tier 1's payoff transforms are cross-file by nature — dedup, extraction — so
+    a change spanning a characterizable file and a demoted one is the case the
+    rule exists for, and it has to resolve downward, or the trust claim on the
+    commit is false about half its diff.
+    """
+    verdict = probe_repo(
+        {**PACKAGE, **PASSING_SUITE, "mypkg/train.py": "import torch\n"}
+    )
+
+    assert verdict.tier_for(["mypkg/core.py"]) is Tier.ONE
+    assert verdict.tier_for(["mypkg/core.py", "mypkg/train.py"]) is Tier.ZERO
+    # A change that touches nothing has had nothing verified about it. The same
+    # answer `Coverage.tier_for` gives, deliberately: #15 composes the two with
+    # `min()`, so they must not disagree about the degenerate case.
+    assert verdict.tier_for([]) is Tier.ZERO
+
+
+def test_a_repository_where_nothing_imports_keeps_no_ceiling_to_demote_from(
+    probe_repo,
+):
+    """Per-module demotion must not become a way to hold a ceiling over nothing.
+
+    Every module here fails the smoke, so there is no code the ceiling could
+    apply to. Raising it anyway would be a claim about the empty set, and the
+    run log would read as a Tier 1 repository — which is the one thing the probe
+    exists to prevent.
+    """
+    verdict = probe_repo(
+        {
+            "mypkg/__init__.py": "import torch\n",
+            "mypkg/core.py": "import torch\n",
+            "tests/test_core.py": "def test_true():\n    assert True\n",
+        }
+    )
+
+    assert gate(verdict, 2).status == PASS
+    assert verdict.ceiling is Tier.ZERO
+    assert verdict.tier_of("mypkg/core.py") is Tier.ZERO
+    assert "no first-party module imports" in verdict.reason
+
+
+def test_an_unsmoked_path_takes_the_ceiling_rather_than_being_demoted(probe_repo):
+    """Gate 3 is demote-only, and that has to hold for absence too.
+
+    `conftest.py` is deliberately never imported by gate 3 — it runs under
+    pytest, and importing it again outside pytest invents failures. If a missing
+    import result demoted it, gate 3 would have quietly become a promotion gate:
+    *only what I saw may be Tier 1*. That is the inversion the whole design is
+    shaped against, so absent evidence takes the ceiling here. The floor is
+    supplied one layer down, by a coverage table that resolves an unknown symbol
+    to Tier 0.
+    """
+    verdict = probe_repo({**PACKAGE, **PASSING_SUITE, "tests/conftest.py": "\n"})
+
+    assert gate(verdict, 3).status == PASS
+    assert verdict.demoted == ()
+    assert verdict.tier_of("tests/conftest.py") is Tier.ONE
 
 
 def test_a_suite_that_cannot_import_its_dependencies_stays_tier_zero(probe_repo):
@@ -166,7 +258,7 @@ def test_a_suite_that_cannot_import_its_dependencies_stays_tier_zero(probe_repo)
         }
     )
 
-    assert verdict.tier is Tier.ZERO
+    assert verdict.ceiling is Tier.ZERO
     assert gate(verdict, 2).status == FAIL
 
 
@@ -187,7 +279,7 @@ def test_gate_three_does_not_import_the_files_that_run_on_import(probe_repo):
         }
     )
 
-    assert verdict.tier is Tier.ONE
+    assert verdict.ceiling is Tier.ONE
     assert gate(verdict, 3).status == PASS
     assert not [c for c in verdict.commands if "__main__" in c or "setup" in c]
 
@@ -200,7 +292,7 @@ def test_undeclarable_dependencies_pin_tier_zero_before_anything_else_runs(probe
         {**PACKAGE, **PASSING_SUITE, "requirements.txt": "not!valid\n"}
     )
 
-    assert verdict.tier is Tier.ZERO
+    assert verdict.ceiling is Tier.ZERO
     assert gate(verdict, 1).status == FAIL
     assert [outcome.status for outcome in verdict.gates[1:]] == [SKIP, SKIP, SKIP]
     # The suite never ran: gate 1 is the gate that keeps a broken sandbox from
@@ -247,7 +339,7 @@ def test_an_opted_in_entry_point_is_an_execution_source(probe_repo):
         }
     )
 
-    assert verdict.tier is Tier.ONE
+    assert verdict.ceiling is Tier.ONE
     assert gate(verdict, 2).status == FAIL
     assert gate(verdict, 4).status == PASS
     assert "an opted-in entry point ran" in verdict.reason
@@ -262,7 +354,7 @@ def test_an_entry_point_is_never_run_without_being_asked(probe_repo):
     """
     verdict = probe_repo({**PACKAGE, "mypkg/__main__.py": "raise SystemExit('ran')\n"})
 
-    assert verdict.tier is Tier.ZERO
+    assert verdict.ceiling is Tier.ZERO
     assert gate(verdict, 4).status == SKIP
     assert not [command for command in verdict.commands if "__main__" in command]
 
@@ -272,7 +364,7 @@ def test_a_shell_string_entry_point_is_refused(probe_repo):
         {**PACKAGE, "polish.toml": '[probe]\nentrypoint = "rm -rf ~; pytest"\n'}
     )
 
-    assert verdict.tier is Tier.ZERO
+    assert verdict.ceiling is Tier.ZERO
     assert gate(verdict, 4).status == FAIL
     assert "refused" in gate(verdict, 4).detail
     assert not [command for command in verdict.commands if "rm" in command]
@@ -295,7 +387,7 @@ def test_an_entry_point_that_fails_promotes_nothing(probe_repo):
         }
     )
 
-    assert verdict.tier is Tier.ZERO
+    assert verdict.ceiling is Tier.ZERO
     assert gate(verdict, 3).status == PASS
     assert gate(verdict, 4).status == FAIL
 
@@ -305,7 +397,7 @@ def test_an_entry_point_cannot_escape_the_repository(probe_repo):
         {**PACKAGE, "polish.toml": '[probe]\nentrypoint = "../../etc/passwd.py"\n'}
     )
 
-    assert verdict.tier is Tier.ZERO
+    assert verdict.ceiling is Tier.ZERO
     assert gate(verdict, 4).status == FAIL
     assert not [command for command in verdict.commands if "passwd" in command]
 
@@ -329,7 +421,7 @@ def test_a_suite_that_never_finishes_resolves_downward(probe_repo):
         budget=Budget(suite_seconds=1.0),
     )
 
-    assert verdict.tier is Tier.ZERO
+    assert verdict.ceiling is Tier.ZERO
     assert gate(verdict, 2).status == FAIL
     assert "did not finish within 1s" in gate(verdict, 2).detail
 
@@ -346,7 +438,7 @@ def test_an_exhausted_budget_resolves_downward(probe_repo):
         budget=Budget(total_seconds=0.0),
     )
 
-    assert verdict.tier is Tier.ZERO
+    assert verdict.ceiling is Tier.ZERO
     assert "budget" in verdict.reason
     assert [outcome.status for outcome in verdict.gates] == [SKIP] * 4
     assert verdict.commands == ()
@@ -360,7 +452,7 @@ def test_a_runner_that_only_ever_errors_resolves_downward(make_repo, sandbox_ven
         runner=lambda command: Completed(code=1, output="boom"),
     )
 
-    assert verdict.tier is Tier.ZERO
+    assert verdict.ceiling is Tier.ZERO
 
 
 def test_a_runner_that_lies_that_everything_worked_cannot_forge_a_pass_count(
@@ -377,7 +469,7 @@ def test_a_runner_that_lies_that_everything_worked_cannot_forge_a_pass_count(
         runner=lambda command: Completed(code=0, output=""),
     )
 
-    assert verdict.tier is Tier.ZERO
+    assert verdict.ceiling is Tier.ZERO
     assert "no pass count" in gate(verdict, 2).detail
 
 
@@ -398,7 +490,7 @@ def test_a_suite_that_ran_and_passed_nothing_is_not_an_execution_source(
         runner=lambda command: Completed(code=0, output="0 passed in 0.01s"),
     )
 
-    assert verdict.tier is Tier.ZERO
+    assert verdict.ceiling is Tier.ZERO
     assert "0 passing tests" in gate(verdict, 2).detail
 
 
@@ -424,7 +516,7 @@ def test_the_repository_does_not_inherit_the_users_environment(probe_repo, monke
         }
     )
 
-    assert verdict.tier is Tier.ONE
+    assert verdict.ceiling is Tier.ONE
 
 
 @pytest.mark.parametrize(
