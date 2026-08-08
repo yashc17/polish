@@ -33,6 +33,7 @@ import time
 from dataclasses import dataclass, field
 from pathlib import Path
 
+from polish import modules
 from polish.firstparty import NotAPythonProject, scan
 
 from . import _graph, _process, _status, _store
@@ -243,7 +244,7 @@ def read(root: Path) -> Observation:
     """
     root = Path(root).resolve()
     files = tuple(scan(root).files)
-    index = _graph.module_index(files)
+    index = modules.index(root, files).by_name
 
     connection, trust = _store.open_for_read(root)
     if connection is None:
@@ -349,7 +350,7 @@ def _sweep(root: Path, connection, now: float, *, across_gap: bool) -> None:
         # Skipping the cycle costs one interval of history; acting on it would
         # mark the whole tree deleted.
         return
-    index = _graph.module_index(files)
+    index = modules.index(root, files).by_name
     known = {
         row["path"]: row
         for row in connection.execute(

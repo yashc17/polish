@@ -24,7 +24,24 @@ would name their own package that.
 
 **Declared root** — a directory packaging metadata names as holding the repo's
 code (`package-dir`, `packages.find.where`, poetry `packages`, flit `module`).
-Grants exemption from ignore rules, not from markers.
+Grants exemption from ignore rules, not from markers. Read by
+`polish.firstparty.declared_roots()`, which is also where *import root* below
+gets the evidence a walk cannot find.
+
+**Import root** — a directory a module name is relative to: what would be on
+`sys.path` for that name to work. Found by walking outwards from a file while
+`__init__.py` keeps appearing, plus what packaging metadata declares, plus the
+repo root. Say *import root* for the directory and *module name* for the name it
+makes; `polish.modules` is the one place either is decided
+([ADR 0009](docs/adr/0009-one-module-index-shared-by-the-probe-and-the-graph.md)).
+
+**Address** — the one name the interpreter reaches a file by on its own terms,
+as opposed to the other names it is legitimately importable by. A file under
+`src/` is addressed `mypkg` and *also* indexed as `src.mypkg`, because PEP 420
+makes both real. Anything that **executes** an import takes the address only —
+gate 3 is demote-only, so a second spelling of a module already imported could
+only ever cost a tier. Anything that **resolves** an import takes them all: an
+edge the graph does not have is a file the closure never reaches.
 
 **Safety envelope** — the apparatus around an edit: snapshot, sandbox, branch,
 and the refusals that guard them. Built by `polish.envelope.run()` and driven by
@@ -126,7 +143,9 @@ what it does is witness, and the value is in having been present.
 
 **Code graph** — the first-party files, the symbols they define, and the import
 edges between them. Verifiable: every file carries a fingerprint, and drift is
-repaired by re-parsing, because the tree is the source of truth.
+repaired by re-parsing, because the tree is the source of truth. Edges are
+resolved through `polish.modules`, the same naming the tier probe imports by, so
+the graph and the probe cannot disagree about what `import x` means.
 
 **Change history** — what the observer saw happen during the day, which
 `git diff` erases: code written at 2pm and deleted at 5pm, and how often a symbol
