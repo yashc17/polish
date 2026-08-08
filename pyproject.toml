@@ -18,6 +18,11 @@ dependencies = [
     # Tier 0's type check, and the gate that catches cross-file breakage.
     # See docs/adr/0004-mypy-as-the-tier-0-type-check.md.
     "mypy>=1.11",
+    # Tier 1's edit engine (SPEC §3.2): Claude Code as a library. Imported
+    # lazily by polish.tier1._claude, so a machine without Node, a `claude`
+    # binary or credentials declines Tier 1 rather than failing to import —
+    # `polish scan` on such a machine has to keep working.
+    "claude-agent-sdk>=0.1",
 ]
 
 [project.scripts]

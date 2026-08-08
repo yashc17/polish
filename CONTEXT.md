@@ -190,10 +190,17 @@ AST-equivalence plus a type check, the edits are deterministic codemods, and the
 claim is **provably behaviour-preserving**. Implemented in `polish.tier0`. Say
 *Tier 0*, not "the safe tier" — Tier 1 is not less safe, it verifies differently.
 
-**Change** — one file's worth of refactoring, decided as a unit: applied,
-verified, then either committed on its own or reverted. Never spans two files,
-which is what makes dropping any single commit safe. A dropped change is still a
-change, and still appears in the run log.
+**Change** — one refactoring, decided as a unit: applied, verified, then either
+committed on its own or reverted. A dropped change is still a change, and still
+appears in the run log.
+
+A Tier 0 change is always one file, because its transform is. A **Tier 1 change
+may span several**, because its payoff transforms are cross-file by nature — the
+dedup that merges five loaders, the extraction that moves code into a new module.
+What makes dropping any single commit safe is therefore not that a change is one
+file but that changes are **independent**: each is verified in isolation, and
+reverted as a whole set including files it created. Say *change* for the unit and
+*change queue* for the run's list of them.
 
 **Provably inert** — a module that can be imported without running anything: the
 standard library minus a denylist, or a first-party module whose top level is
@@ -272,6 +279,39 @@ whose oracle was thrown away. An edit's tier is the lowest among the symbols it
 touches ([question #4](https://github.com/yashc17/polish/issues/14)), looked up
 through `Coverage.tier_for`.
 
-Terms from `docs/SPEC.md` not yet exercised by code — *Agent SDK edits*,
-*verifier*, *reporter*, *change queue*, *repair attempt* — are defined there and
-move here as they get built.
+**Change queue** — the list of changes an agent proposes for one night, before
+any of them is made. Proposed in a single read-only pass (the planning agent
+cannot edit), then applied one at a time. Say *queue* for the list and *proposed
+change* for an entry that has not been applied yet — the gap between the two is
+where eligibility is decided, so it has a name.
+
+**Eligible** — a proposed change every symbol of which has a surviving oracle,
+and which is therefore allowed Tier 1 treatment. Its opposite is **refused Tier
+1**: the change is declined *before* it is edited, and the run log names the
+symbol that refused it. Distinct from *dropped*, which is a change that was made
+and failed. Refused costs nothing; dropped costs an edit and a repair attempt.
+
+**Repair attempt** — the one bounded retry a failing change gets, with the
+verification output handed back verbatim (SPEC §3.10). **Exactly one**: zero
+discards work an obvious fix would have saved, unbounded is an agent arguing with
+a test suite until morning. Not configurable, because the number is the policy.
+
+**Verifier** — the composition of all three Tier 1 checks: the characterization
+oracles, the repository's own suite, and the type check. Owns keep / repair /
+drop, and every change passes through it on every attempt. Say *verify* for what
+it does to a change and *characterize* for what was recorded before the night
+began — they run the same oracles and mean different things.
+
+**Drift** — a file the agent edited that its change did not declare. Not a
+verification failure and not repairable: the change Polish tiered is not the
+change on the disk, so the whole set is reverted. The reason the snapshot covers
+the entire first-party set rather than only the declared paths.
+
+**Agent** — whatever writes a Tier 1 edit: the Claude Agent SDK in production, a
+script in the tests. Three calls and nothing more — *propose*, *apply*, *repair*
+— deliberately too narrow to form an opinion about whether a change is good. Say
+*agent* for the editor and *harness* for everything that decides, because the
+product's whole claim is that the second one decided.
+
+Terms from `docs/SPEC.md` not yet exercised by code — *reporter* — are defined
+there and move here as they get built.

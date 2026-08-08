@@ -26,10 +26,17 @@ Early. Three commands work: `polish scan`, `polish observe` and `polish run`.
 The run scopes itself to what changed since the last one plus its dependency
 closure, probes which tier your repository has earned, then makes edits: **Tier
 0** removes unused imports it can prove are safe to remove, one reviewable
-commit each. On a **Tier 1** repository the run also characterizes your code
-before touching it — flaky tests are found and quarantined, behaviour is traced
-into oracles, and coverage is reported per symbol. The Tier 1 *edits* those
-oracles exist to verify are not built yet.
+commit each. On a **Tier 1** repository the run first characterizes your code —
+flaky tests are found and quarantined, behaviour is traced into oracles, and
+coverage is reported per symbol — and then an agent proposes a queue of deeper
+refactors, each verified against those oracles, your own suite and a type check
+before it is allowed to become a commit. A change that fails verification gets
+one repair attempt, and is otherwise reverted on its own with the failure in the
+log; the rest of the queue carries on.
+
+The night is not yet bounded by a token budget
+([#16](https://github.com/yashc17/polish/issues/16)), so Tier 1 has no hard cost
+ceiling. Until it does, point it at repositories you are willing to spend on.
 
 ### `polish observe` — the daytime observer
 
@@ -322,6 +329,46 @@ No commit depends on any other, so you can drop one you disagree with and keep
 the rest. The day's uncommitted work is committed first, on its own, so that
 every refactoring commit above it is a diff of Polish's work alone.
 
+### Tier 1 — what "verified against recorded behaviour" means here
+
+On a repository Polish can execute, it can do more than reason about your code:
+it can check what your code *did*. That earns a second tier, which runs after
+Tier 0 rather than instead of it — being promoted never takes a transform away.
+
+An agent proposes a queue of changes, and Polish applies them one at a time.
+Every change, on every attempt, passes three checks:
+
+- the **characterization oracles** recorded from a real run of your suite,
+- your **own test suite**, held to the baseline it had before the night began,
+- a **type check**, held to introducing no diagnostic that was not already there.
+
+The oracles are the ones doing work the others cannot. A test suite asserts what
+its author thought to assert; the oracles assert what your code was observed to
+do. A change that keeps `len(scale([1, 2])) == 2` true while quietly changing
+both values passes your suite and fails the oracle — that is the case this tier
+exists for.
+
+**A change that fails gets exactly one repair attempt**, with the failing output
+handed back verbatim. Not zero, because an obvious fix is worth one try; not
+unbounded, because an agent arguing with a test suite until morning is not a
+night you want to pay for. If the second attempt still fails, **that change alone
+is reverted** — including deleting files it created — the failure goes in the run
+log, and the queue moves on. One bad change costs one change.
+
+Two things are refused before anything is edited, so they cost nothing:
+
+- **A change touching code with no surviving oracle.** If a generated test was
+  discarded for being non-deterministic, the code it covered has no recorded
+  behaviour, and a commit claiming "verified against recorded behaviour" would be
+  false. The run log names the symbol that refused it.
+- **A change that only creates files.** Polish is not a code generator; it only
+  touches code that already exists. A real extraction always says which file it
+  is taking the code *out* of.
+
+A dropped change is still reported, with its failure output, because a night that
+attempted six changes and shipped four is a different night from one that
+attempted four — and you cannot tell them apart from the branch alone.
+
 ### `polish scan` — the first-party file set
 
 ```console
@@ -403,6 +450,28 @@ The reasoning, and the residual holes, are in
 [ADR 0006](docs/adr/0006-a-command-allowlist-of-fixed-shapes.md) and
 [ADR 0007](docs/adr/0007-a-polish-authored-harness-inside-the-allowlist.md).
 
+**On a Tier 1 repository, a model writes the edits**, so it gets its own
+allowlist — a shorter one, in the same spirit. Planning is **read-only**: the
+agent that proposes the change queue has `Read`, `Glob` and `Grep` and cannot
+edit anything, so no proposal can arrive with the work already done. Editing adds
+`Write` and `Edit` and nothing else.
+
+`Bash` is explicitly denied, and that is worth saying out loud because it is the
+tool a coding agent would otherwise reach for first. Two reasons: it would be a
+general execution primitive inside the sandbox chosen by a model, which is
+exactly what the allowlist above exists to prevent — and it would let the agent
+run your tests itself and form its own opinion about whether a change is good.
+The entire claim of this tier is that the *harness* decided. So the agent changes
+bytes on a disk, and everything about whether those bytes ship is measured on the
+other side of a seam it cannot reach.
+
+What that does **not** claim: `Write` inside a worktree is still `Write`. The
+agent is bounded to the sandbox by the SDK's own path handling, not by anything
+Polish adds, and the machine is no more isolated here than anywhere else on this
+page. Polish does check afterwards that a change touched only the files it
+declared — an edit outside them reverts the whole change — but that is integrity
+of the review surface, not containment.
+
 This is deliberate, and it is the design's weakest guarantee. Docker would give
 real isolation but fails exactly where autonomous refactoring matters most —
 CUDA repos, large local datasets, mounted credentials. Safe-by-default is a lie
@@ -422,7 +491,8 @@ polish/
 │   ├── observer/     #   the daytime daemon: code graph and change history
 │   ├── probe/        #   the tier probe: four gates and the command allowlist
 │   ├── scope/        #   what a run looks at: the changed files and their closure
-│   └── tier0/        #   deterministic codemods, proven rather than tested
+│   ├── tier0/        #   deterministic codemods, proven rather than tested
+│   └── tier1/        #   agent edits: the queue, the verifier, one repair, keep or drop
 ├── tests/            # suite, plus two hand-labelled corpora
 ├── scripts/          # corpus capture and reporting
 └── docs/             # design docs and specs
