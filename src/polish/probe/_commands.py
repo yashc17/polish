@@ -39,6 +39,12 @@ its program text is a **constant in this file**, compared for exact equality by
 the validator, so the command provably carries no repository input at all. See
 `docs/adr/0007-a-polish-authored-harness-inside-the-allowlist.md`, which amends
 ADR 0006 rather than routing around it.
+
+#32 gave that shape a fourth program rather than a sixth shape, so that the
+harness can trace gate 4's opted-in entry point as well as the suite. The entry
+point's *target* is repository-named, so it does not appear in the command at
+all — it travels in the harness configuration, and `entrypoint_target` below is
+what checks it there by exactly the rule that guards it in `argv`.
 """
 
 from __future__ import annotations
@@ -46,7 +52,7 @@ from __future__ import annotations
 import os
 import re
 import subprocess
-from collections.abc import Mapping, Sequence
+from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -63,17 +69,25 @@ HARNESS = "harness"
 HARNESS_MODULE = "_polish_harness"
 
 #: What Polish's harness is asked to do. The task is in the *program text* and
-#: not in an argument, so the run log distinguishes the three without the
+#: not in an argument, so the run log distinguishes the four without the
 #: allowlist having to admit a single repository-influenced character.
+#:
+#: `ENTRYPOINT` above doubles as the fourth task's name, because it names the
+#: same thing from two sides: gate 4 runs the opted-in target to find out
+#: whether the repository executes, and #32's harness task runs it again under
+#: the recorder. The two vocabularies stay distinct — a *kind* selects a shape,
+#: a *task* is a program the fifth shape carries — and agree on this one word.
 SUITE = "suite"
 TRACE = "trace"
 ORACLES = "oracles"
 
-#: The only three programs the fifth shape may carry. Compared for equality, so
+#: The only four programs the fifth shape may carry. Compared for equality, so
 #: this dictionary is the entire vocabulary — nothing is assembled at runtime.
+#: Adding one is an edit to this file and therefore an amendment to ADR 0007,
+#: which is the property that makes the shape defensible at all.
 HARNESS_PROGRAMS: Mapping[str, str] = {
     task: f"import {HARNESS_MODULE} as _h; _h.{task}()"
-    for task in (SUITE, TRACE, ORACLES)
+    for task in (SUITE, TRACE, ORACLES, ENTRYPOINT)
 }
 
 #: The fixed argument prefix each kind must begin with. The repository can
@@ -222,6 +236,50 @@ def entrypoint(python: Path, target: str, timeout: float) -> Command:
     """
     arguments = ("-m", target) if MODULE.match(target) else (target,)
     return Command(kind=ENTRYPOINT, python=python, arguments=arguments, timeout=timeout)
+
+
+def ensure_pytest(
+    python: Path,
+    run: Callable[[Command], Completed],
+    *,
+    import_seconds: float = 60.0,
+    install_seconds: float = 300.0,
+) -> str:
+    """Make pytest importable in the sandbox. Returns `""`, or why it could not.
+
+    Two allowlisted commands, in this order, and never more: ask whether pytest
+    is there, and install it if it is not. A repository with a suite need not
+    declare pytest — plenty of them assume it is simply present — so gate 2
+    installs it rather than reporting "no suite" about a repository that plainly
+    has one.
+
+    Shared with characterization (#32) rather than copied into it. A repository
+    promoted by gate 4 alone never reaches gate 2, so nothing has put pytest in
+    its sandbox — and Polish's generated oracles *are* pytest tests, so the
+    replay gate would fail for a reason belonging to the sandbox rather than to
+    the repository. Same need, same two commands, one implementation.
+    """
+    if run(import_smoke(python, ["pytest"], import_seconds)).ok:
+        return ""
+    if run(pip_install(python, ["pytest"], install_seconds)).ok:
+        return ""
+    return "pytest is not installed in the sandbox and could not be installed"
+
+
+def entrypoint_target(target: str) -> str:
+    """The gate 4 target, checked before it is trusted anywhere. Returns it.
+
+    Gate 4 gets this check for free: the target goes into `argv`, and `Command`
+    validates `argv` at construction. #32's harness task does not — the target
+    travels in the harness configuration instead, precisely so that the fifth
+    shape stays a constant (ADR 0007) — and "not in `argv`" must never quietly
+    become "not checked". This is the same rule, factored out so that the two
+    paths cannot drift apart: a dotted module, or a `.py` file inside the
+    repository, and nothing else.
+    """
+    if not MODULE.match(target):
+        _validate_script(target)
+    return target
 
 
 def harness(python: Path, task: str, timeout: float) -> Command:
@@ -396,7 +454,10 @@ def _validate_entrypoint(tail: tuple[str, ...]) -> None:
             "an entry point is one module or one script, never a command line; "
             f"got {list(tail)}. Shell strings are not allowlisted."
         )
-    script = tail[0]
+    _validate_script(tail[0])
+
+
+def _validate_script(script: str) -> None:
     if (
         not script.endswith(".py")
         or script.startswith(("-", "/"))

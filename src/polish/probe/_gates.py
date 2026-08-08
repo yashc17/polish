@@ -155,7 +155,7 @@ def _walk(
     session: Session,
     reached: list[GateOutcome],
 ) -> TierVerdict:
-    target = _discovery.entrypoint(root)
+    target = _discovery.opted_in(root)
 
     reached.append(_gate_one(root, session))
     if reached[-1].failed:
@@ -323,22 +323,19 @@ def _gate_four(session: Session, target: str | None) -> GateOutcome:
 def _ensure_pytest(session: Session) -> str | None:
     """Make pytest importable in the sandbox, or say why gate 2 cannot proceed.
 
-    A repository with a suite need not declare pytest — plenty of them assume it
-    is simply present — so the probe installs it rather than reporting "no
-    suite" about a repository that plainly has one. Failure here is still a gate
-    2 failure and still resolves downward.
+    Failure here is still a gate 2 failure and still resolves downward. The two
+    commands live in `_commands` because characterization needs the same pair
+    for the same reason (#32), and one implementation is one thing to keep true.
     """
-    smoke = _commands.import_smoke(
-        session.python, ["pytest"], session.budget.import_seconds
+    return (
+        _commands.ensure_pytest(
+            session.python,
+            session.run,
+            import_seconds=session.budget.import_seconds,
+            install_seconds=session.budget.install_seconds,
+        )
+        or None
     )
-    if session.run(smoke).ok:
-        return None
-    install = _commands.pip_install(
-        session.python, ["pytest"], session.budget.install_seconds
-    )
-    if session.run(install).ok:
-        return None
-    return "pytest is not installed in the sandbox and could not be installed"
 
 
 def _failed_imports(session: Session, names: Sequence[str]) -> dict[str, str]:

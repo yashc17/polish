@@ -71,10 +71,10 @@ CONFIG_FILENAME = "polish.toml"
 
 __all__ = [
     "Module",
-    "entrypoint",
     "import_roots",
     "is_test_module",
     "modules",
+    "opted_in",
     "requirements",
     "test_files",
 ]
@@ -155,12 +155,16 @@ def import_roots(found: Sequence[Module]) -> tuple[Path, ...]:
     return _modules.roots(found)
 
 
-def entrypoint(root: Path) -> str | None:
+def opted_in(root: Path) -> str | None:
     """Gate 4's opt-in target, from `[probe] entrypoint` in `polish.toml`.
 
     Absent by design. SPEC §3.3 makes entry points the largest risk surface the
     probe has, so nothing here is inferred from the repository — a `__main__.py`
     or a `[project.scripts]` table is not consent.
+
+    Named for the *consent* rather than for the target, because two other things
+    are already spelled `entrypoint`: gate 4's command builder, and #32's harness
+    task. This is the only one that answers "did the user ask for this?".
     """
     section = _read_section(root / CONFIG_FILENAME, "probe")
     value = section.get("entrypoint")

@@ -91,6 +91,7 @@ ran       python -c import pytest
 ran       python -m pip install --only-binary :all: pytest
 ran       python -m pytest -q --tb=no -p no:cacheprovider
 ran       python -c import app, app.loader, app.render, app.slug
+source    the repository's own test suite (gate 2)
 baseline  3x suite, 6 trusted, 1 quarantined
   ~ tests/test_flaky.py::test_cache_warms_up (failed / passed / passed)
 oracles   5 kept, 1 discarded
@@ -193,7 +194,8 @@ cannot average its way into Tier 1:
 3. **imports** — does each first-party module import? No → **that module** is
    Tier 0. **Yes → nothing.** An import smoke can take Tier 1 away; it can never
    grant it.
-4. **entrypoint** — only what you named in `polish.toml`, never inferred.
+4. **entrypoint** — only what you named in `polish.toml`, never inferred. Yes →
+   a Tier 1 candidate, and it is skipped entirely when gate 2 already passed.
 
 Gates 1, 2 and 4 set a **ceiling** for the repository, because what they ask
 about is repository-wide: a sandbox either builds or it does not, and there
@@ -235,6 +237,15 @@ traced with `sys.settrace` while your suite runs, and each recorded call becomes
 a test asserting it still returns what it was observed returning. Each one is
 then replayed three times against unmodified code, and anything that varies is
 **discarded — never emitted**.
+
+**If you have no suite, the entry point you opted in to is traced instead.**
+That is the same recorder and the same replay gate over the other execution
+source the tier probe accepts, so a research or ML repository promoted by gate 4
+alone gets real oracles rather than an empty night. It runs once, so there is
+nothing to run three times: the run log reports `baseline none` — never "0
+quarantined", which would read like a suite that was measured and found stable —
+and the oracles' three replays are then the whole determinism gate. If your
+repository has both, the suite is traced and your entry point is left alone.
 
 The asymmetry is deliberate. A flaky test of yours *drops good work*. A flaky
 oracle of Polish's *can pass a broken change*, which is a false green on the one
@@ -389,7 +400,10 @@ The fifth is Polish's own characterization harness, and its program text is a
 constant in Polish's source, compared for exact equality — not one character of
 it comes from your repository. `-P` is what makes that true: without it, `python
 -c` puts your repository's own directory first on `sys.path`, and a file of the
-right name sitting there would supply the program instead.
+right name sitting there would supply the program instead. That holds even when
+the harness runs *your* entry point: the target is a parameter it reads from a
+file Polish wrote, checked by the same rule that guards it on the command line,
+so the command itself stays identical on every repository Polish is pointed at.
 
 Nothing here runs through a shell, never with your environment inherited (the child gets a
 built `PATH` and a throwaway `HOME`, so the API keys in your shell do not reach
@@ -409,6 +423,12 @@ Entry points are never run unless you name one yourself:
 [probe]
 entrypoint = "yourpkg.demo"   # a module, or "scripts/demo.py" — never a shell string
 ```
+
+Naming one has two consequences, and the second is the reason to bother: it is
+what a repository with no test suite is promoted to Tier 1 *by*, and it is what
+Polish then traces to build that repository's oracles. It is run at most twice —
+once by the probe, once under the recorder — and not at all if your suite
+already passed.
 
 The reasoning, and the residual holes, are in
 [ADR 0006](docs/adr/0006-a-command-allowlist-of-fixed-shapes.md) and

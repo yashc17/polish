@@ -114,6 +114,13 @@ SPEC §3.1 calls *actively corrosive*. This is the single most load-bearing rule
 in the probe, and it is what decides the shape of a *demotion*: gate 3 subtracts
 from the *ceiling*, never adds to it.
 
+Characterization traces whichever source the repository has, suite first
+([#32](https://github.com/yashc17/polish/issues/32)) — the same order and the
+same rule as the probe, where gate 4 is not run once gate 2 has supplied one.
+Which source it was is carried on the `Characterization`, because it decides
+what verification is able to check. Say *execution source* for the concept and
+name the gate when it matters; never say "the suite" about an entry point.
+
 **Downward resolution** — the rule that ambiguity, timeout, error, exhausted
 budget and refused command all resolve to Tier 0. Nothing in the probe resolves
 upward on anything but a repository actually executing.
@@ -130,10 +137,11 @@ what runs. See [ADR 0006](docs/adr/0006-a-command-allowlist-of-fixed-shapes.md)
 and SPEC §3.3.
 
 **Harness** — the fifth shape, and Polish's own program running inside the
-sandbox: `python -P -c "<a constant in polish's source>"`, doing one of three
-tasks (*suite*, *trace*, *oracles*). Its parameters travel in the environment
-because the command must stay a constant, and `-P` is what stops the repository
-supplying the module. See
+sandbox: `python -P -c "<a constant in polish's source>"`, doing one of four
+tasks (*suite*, *trace*, *oracles*, *entrypoint*). Its parameters travel in the
+environment because the command must stay a constant, and `-P` is what stops the
+repository supplying the module. The entry point's *target* is one of those
+parameters, for exactly that reason. See
 [ADR 0007](docs/adr/0007-a-polish-authored-harness-inside-the-allowlist.md). Say
 *harness* for Polish's program and *suite* for the repository's tests.
 
@@ -257,8 +265,8 @@ verdict, and never read as one: the run ships nothing and says so.
 **Characterization** — what Tier 1 knows about a repository before any edit: the
 suite's flake baseline, the generated oracles that survived replay, and the
 per-symbol coverage. Produced by `polish.characterize.characterize()` inside the
-sandbox. Say *characterization* for the whole record and *oracle* for one test
-in it.
+sandbox, from whichever **execution source** the repository has. Say
+*characterization* for the whole record and *oracle* for one test in it.
 
 **Oracle** — one generated test asserting that a recorded call still returns
 what it was observed returning. Written as a `repr` comparison, not `==`, so
@@ -276,10 +284,17 @@ before any edit exists to bias it. Authoritative because it is the only thing
 that can tell a pre-existing flake from one Polish caused. Distinct from Tier 0's
 type-check baseline; say which when both are in scope.
 
+A repository whose execution source is an entry point has **none**, because an
+entry point runs once and there is nothing to compare. The run log says `none`
+and never "0 quarantined" — that would read exactly like a suite measured and
+found stable, which is **churn**'s UNKNOWN-not-zero rule one component along
+([#32](https://github.com/yashc17/polish/issues/32)).
+
 **Quarantined** — a test whose result was not identical across the baseline's N
 runs. Excluded from the night's verification, **named in the run log**, and
 never able to drop a change. Applied to the *user's* tests, because you cannot
-delete someone else's test.
+delete someone else's test. An entry-point repository has no quarantine step at
+all, rather than an empty one.
 
 **Discarded** — a generated oracle that did not pass identically across all
 **R=3** replays against unmodified code. Deleted, not quarantined. The asymmetry

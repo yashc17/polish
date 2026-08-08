@@ -49,10 +49,13 @@ from ._commands import (
     Command,
     Completed,
     NotAllowed,
+    ensure_pytest,
+    entrypoint,
+    entrypoint_target,
     harness,
     interpreter,
 )
-from ._discovery import Module, modules
+from ._discovery import Module, modules, opted_in, test_files
 from ._gates import Runner, Session
 from ._verdict import (
     FAIL,
@@ -87,11 +90,16 @@ __all__ = [
     "Runner",
     "Tier",
     "TierVerdict",
+    "ensure_pytest",
+    "entrypoint",
+    "entrypoint_target",
     "harness",
     "interpreter",
     "modules",
+    "opted_in",
     "probe",
     "sandbox_runner",
+    "test_files",
 ]
 
 
