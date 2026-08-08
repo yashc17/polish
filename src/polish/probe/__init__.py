@@ -15,6 +15,13 @@ The mechanics are four layered hard gates, decided in issue #3 and implemented
 in `_gates`. The verdict they produce carries the evidence with it, because a
 user whose repository landed Tier 0 is owed the reason.
 
+The verdict is per **path**, not per repository (issue #28, question #4): gates
+1, 2 and 4 set a ceiling, gate 3 takes it away one module at a time, and
+`TierVerdict.tier_of(path)` is what a caller asks. Per *symbol* is a finer
+question and it is answered elsewhere, by `characterize.Coverage` — which is
+where it has to be, because a symbol's tier depends on whether an oracle
+survived replay, and nothing has been replayed at the moment the probe runs.
+
 The probe runs *inside the sandbox* (SPEC §3.3) and nowhere else. It installs
 packages and executes the repository's test suite, which is not a thing to do to
 someone's working tree — `polish.envelope.run()` is what calls it, after the
@@ -47,7 +54,16 @@ from ._commands import (
 )
 from ._discovery import Module, modules
 from ._gates import Runner, Session
-from ._verdict import FAIL, PASS, SKIP, Budget, GateOutcome, Tier, TierVerdict
+from ._verdict import (
+    FAIL,
+    PASS,
+    SKIP,
+    Budget,
+    Demotion,
+    GateOutcome,
+    Tier,
+    TierVerdict,
+)
 
 __all__ = [
     "ENTRYPOINT",
@@ -64,6 +80,7 @@ __all__ = [
     "Budget",
     "Command",
     "Completed",
+    "Demotion",
     "GateOutcome",
     "Module",
     "NotAllowed",

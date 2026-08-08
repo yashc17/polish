@@ -168,7 +168,9 @@ the scope rather than narrow it:
 The scope narrows what Polish *edits*. It never narrows what Polish *checks*:
 Tier 0's type check always covers the whole first-party set, because it is the
 only gate that can see a binding referenced from a file just outside the scope.
-The tier probe likewise still judges the whole repository. See
+The tier probe likewise still sees the whole repository — and since its verdict
+became per path, that is what keeps it honest rather than merely thorough: a
+file the probe never looked at would inherit the ceiling it never earned. See
 [ADR 0008](docs/adr/0008-the-incremental-scope-is-a-closure-over-two-runs-graphs.md).
 
 ### The tier probe — what Polish is allowed to claim about your repo
@@ -188,9 +190,18 @@ cannot average its way into Tier 1:
    no code of yours at all.
 2. **suite** — is there a test suite, does it run, does anything pass? Yes → a
    Tier 1 candidate.
-3. **imports** — does every first-party module import? No → Tier 0. **Yes →
-   nothing.** An import smoke can take Tier 1 away; it can never grant it.
+3. **imports** — does each first-party module import? No → **that module** is
+   Tier 0. **Yes → nothing.** An import smoke can take Tier 1 away; it can never
+   grant it.
 4. **entrypoint** — only what you named in `polish.toml`, never inferred.
+
+Gates 1, 2 and 4 set a **ceiling** for the repository, because what they ask
+about is repository-wide: a sandbox either builds or it does not, and there
+either is something Polish can execute or there is not. Gate 3 then takes that
+ceiling away **one module at a time**, so the verdict is a tier per path rather
+than one tier for everything. An example app needing a dependency you never
+declared is held at Tier 0 on its own, and does not drag your library down with
+it — while a change spanning both resolves to the lower of the two.
 
 **Gate 3 being demote-only is the point of the design.** Importing a module
 traces constants and definitions — it never enters a function body. A repository

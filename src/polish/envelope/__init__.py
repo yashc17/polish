@@ -227,13 +227,14 @@ def _perform(
     # packages and executes the repository's own test suite, which is not
     # something to do to a working tree Polish has promised not to touch (§4.9).
     #
-    # It sees the whole first-party set even on an incremental run, deliberately.
-    # The verdict is per-repository today (#28 makes it per-symbol), so computing
-    # it from a subset would be a narrower claim wearing the same name — and the
-    # subset is not cheaper where it counts, because gates 1 and 2 take no file
-    # set at all. Scoping would only shrink gate 3, which is demote-only, so the
-    # single effect would be to make demotion less likely. That is false Tier 1,
-    # the one error the probe exists to prevent.
+    # It sees the whole first-party set even on an incremental run, and #28 made
+    # that load-bearing rather than merely tidy. The verdict is per path now, and
+    # a path gate 3 never smoked keeps the ceiling — so handing the probe a
+    # subset would not narrow the verdict, it would *widen* it, leaving every
+    # unsmoked file eligible for Tier 1 on no evidence. Nor is the subset cheaper
+    # where it counts: gates 1 and 2 take no file set at all, so scoping would
+    # shrink only gate 3, the demote-only one. Both effects run the same way —
+    # towards false Tier 1, the one error the probe exists to prevent.
     verdict = probe(
         sandbox.worktree,
         venv=sandbox.venv,
@@ -244,8 +245,10 @@ def _perform(
     # Step 4's prerequisite, and only on a repository that earned it. This is
     # where the night's verification oracles come from (SPEC §3.1, §4.5): the
     # suite's flake baseline, the traced recordings, and the per-symbol coverage
-    # that question #4 made the input to tiering. On a Tier 0 repository there
-    # is no execution to record, so there is nothing here to do.
+    # that question #4 made the input to tiering. The question asked is whether
+    # *any* code reached Tier 1, not whether all of it did: a repository whose
+    # example apps were demoted by gate 3 still has a suite worth tracing, and
+    # the coverage table is what then decides symbol by symbol.
     #
     # Whole first-party set, not the scope, for the same reason as the probe
     # above and one more of its own. The suite runs whole either way — pytest
@@ -261,7 +264,7 @@ def _perform(
             first_party=first_party.files,
             policy=policy,
         )
-        if verdict.tier_one
+        if verdict.reaches_tier_one
         else None
     )
 

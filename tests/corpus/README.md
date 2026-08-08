@@ -156,22 +156,30 @@ and a reviewer should be able to tell which without running anything.
 | `flash-attention` | Needs a GPU, **and has a suite** — so "cannot execute" is measured separately from "has nothing to execute". Fifty-one collection errors on a machine with no CUDA. | 0 |
 | `nanogpt` | No test suite at all, and needs a GPU. The research-repo shape SPEC §1 says needs Polish most. | 0 |
 
-## The flask row is meant to disagree
+## The flask row was meant to disagree, and it is what closed the gap
 
-`flask` is labelled Tier 1 and the probe says Tier 0, and that is on purpose.
-Its suite passes 485 tests and every `flask.*` module imports — the code Polish
-would actually refactor is characterizable. But its first-party set also holds
-the example apps under `examples/celery/` and `docs/conf.py`, which need celery
-and sphinx, and v1's verdict is **per repository**, so gate 3 demotes the whole
-thing for eight unimportable modules.
+`flask` was labelled Tier 1 while the probe said Tier 0, on purpose. Its suite
+passes 485 tests and every `flask.*` module imports — the code Polish would
+actually refactor is characterizable. But its first-party set also holds the
+example apps under `examples/celery/` and `docs/conf.py`, which need celery and
+sphinx, and the probe's original verdict was **per repository**, so gate 3
+demoted the whole thing for eight unimportable modules.
 
 That gap was filed as evidence for [question
-#4](https://github.com/yashc17/polish/issues/14), and #4 has since been answered
-in favour of **per-symbol / per-path tiering** — so this row is now the worked
-example of why. Under the answered rule the label is simply correct and the
-probe's per-repository verdict is the thing lagging. **Do not relabel it to
-match the code.** A false Tier 0 has no ceiling precisely so a row like this can
-sit in the corpus and be argued about with data.
+#4](https://github.com/yashc17/polish/issues/14), #4 answered in favour of
+**per-symbol / per-path tiering**, and
+[#28](https://github.com/yashc17/polish/issues/28) shipped it. So the label was
+right all along and the row is now on the diagonal: a Tier 1 ceiling, 75 paths
+at Tier 1, and 8 held at Tier 0 individually. **The label never changed**, which
+is the point. A false Tier 0 has no ceiling precisely so that a row like this
+can sit in the corpus and be argued about with data until the data wins.
+
+Three of those eight demotions are under `src/flask/sansio/` — real library
+code, demoted because Polish addresses a namespace subpackage by the wrong name
+([#34](https://github.com/yashc17/polish/issues/34)), not because flask is at
+fault. That is a false Tier 0 *per path*, invisible until the verdict got fine
+enough to show it, and pinned by name in `tests/test_probe_corpus.py` so that
+fixing #34 fails a test rather than passing silently.
 
 ## Adding a repo
 

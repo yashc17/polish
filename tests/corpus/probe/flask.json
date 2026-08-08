@@ -4,9 +4,9 @@
  "commit": "6a2f545bfd8ed31e19066a299296917e034aca58",
  "captured": "2026-08-07",
  "captured_on": "darwin python3.12.7",
- "note": "Second healthy repository, and the corpus's designed disagreement: 485 tests pass and every flask.* module imports, but the example apps under examples/celery/ need celery, which flask does not declare.",
+ "note": "Second healthy repository, and the corpus's designed partial-coverage case: 485 tests pass and every flask.* module imports, but the example apps under examples/celery/ need celery, which flask does not declare.",
  "label_rule": {
-  "reason": "The code Polish would refactor is characterizable, so a human says Tier 1. The tier probe's per-repository verdict disagrees: gate 3 demotes the whole repository for eight unimportable modules in examples/ and docs/. Labelled against the code deliberately. Question #4 has since been answered in favour of per-symbol/per-path tiering, which makes this label correct and the per-repository verdict the thing that lags.",
+  "reason": "The code Polish would refactor is characterizable, so a human says Tier 1. The label has never changed; what changed under it is the verdict. It was captured while the probe answered per repository, where gate 3 demoted the whole of flask for eight unimportable modules in examples/ and docs/ and this row scored as a false Tier 0 \u2014 labelled against the code deliberately, and left that way while question #4 was open. #4 answered in favour of per-symbol/per-path tiering and #28 shipped it, so the ceiling is now Tier 1 and the eight are held at Tier 0 individually. Three of those eight are under src/flask/sansio/ and are Polish's own addressing hole rather than flask's (#34); they are a false Tier 0 per path, which is the safe direction.",
   "expected_tier": 1
  },
  "recorded": {

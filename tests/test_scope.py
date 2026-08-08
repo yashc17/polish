@@ -521,9 +521,11 @@ def test_the_run_log_states_what_was_in_scope_and_why(nights):
 def test_the_probe_still_sees_the_whole_repository_on_an_incremental_night(nights):
     """The scope narrows what is refactored, never what the tier is judged on.
 
-    The verdict is per-repository (#28 makes it per-symbol); computing it from a
-    subset would be a narrower claim wearing the same name, and gate 3 is
-    demote-only, so the only effect would be to make demotion less likely.
+    The verdict is per path since #28, which makes this stricter rather than
+    looser: a path gate 3 never smoked keeps the ceiling, so probing a subset
+    would not narrow the verdict but *widen* it, leaving every unsmoked file
+    eligible for Tier 1 on no evidence. Gate 3 is demote-only, and the only
+    other effect of scoping it would be to make demotion less likely.
     """
     first, second = nights
 

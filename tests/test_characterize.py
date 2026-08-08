@@ -681,7 +681,7 @@ def test_a_night_shift_run_characterizes_a_tier_one_repository(
 
     record = envelope.run(root)
 
-    assert record.tier is not None and record.tier.tier_one
+    assert record.tier is not None and record.tier.reaches_tier_one
     assert record.characterization is not None
     assert record.characterization.baseline.runs == 2
     assert record.characterization.oracles
@@ -697,5 +697,5 @@ def test_a_tier_zero_repository_is_not_characterized_at_all(make_git_repo):
         make_git_repo({"pyproject.toml": PROJECT, "sample/__init__.py": ""})
     )
 
-    assert record.tier is not None and not record.tier.tier_one
+    assert record.tier is not None and not record.tier.reaches_tier_one
     assert record.characterization is None
